@@ -56,7 +56,8 @@ final class WardenOnboardingPresenter {
         onFinish: @escaping () -> Void,
         onDismiss: @escaping () -> Void
     ) {
-        guard !isPresenting else { return }
+        // Workbench seeds its own providers, so Warden's first-run tour is only shown via Help → Replay Onboarding.
+        guard !isPresenting, UserDefaults.standard.bool(forKey: "workbench.showOnboardingTour") else { return }
 
         presentationTask?.cancel()
         presentationTask = Task { [weak self] in
