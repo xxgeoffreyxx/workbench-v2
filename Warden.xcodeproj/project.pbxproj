@@ -1366,6 +1366,7 @@
 				MARKETING_VERSION = 2.0;
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = me.mccaleb.Workbench;
+				PRODUCT_MODULE_NAME = Warden;
 				PRODUCT_NAME = Workbench;
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = macosx;
@@ -1416,6 +1417,7 @@
 				MARKETING_VERSION = 2.0;
 				ONLY_ACTIVE_ARCH = NO;
 				PRODUCT_BUNDLE_IDENTIFIER = me.mccaleb.Workbench;
+				PRODUCT_MODULE_NAME = Warden;
 				PRODUCT_NAME = Workbench;
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = macosx;
