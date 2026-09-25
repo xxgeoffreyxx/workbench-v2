@@ -59,3 +59,35 @@ final class JobsTests: XCTestCase {
         XCTAssertEqual(JobFeed.rlResearchTitle(from: "pi-api-rl.2026"), "PI API RL")
     }
 }
+
+final class JobFeedCleaningTests: XCTestCase {
+    private func record(_ id: String, status: JobStatus, age: TimeInterval, task: String? = nil) -> JobRecord {
+        JobRecord(id: id, project: "Scout", workflow: .helga, status: status, title: id, model: nil, host: nil,
+                  taskPath: task, artifactPath: nil, summary: "Helga investigation started", output: "",
+                  updatedAt: Date(timeIntervalSinceNow: -age), eventCount: 1)
+    }
+
+    func testBenchRunsHiddenByDefault() {
+        let records = [record("a", status: .complete, age: 10, task: "/Users/x/.hosaka/.bench-runs/t/run-1"),
+                       record("b", status: .complete, age: 10, task: "/Users/x/scout/tasks/done/t")]
+        XCTAssertEqual(JobFeed.clean(records, includeBenchRuns: false, staleAfter: 3600, now: Date()).map(\.id), ["b"])
+        XCTAssertEqual(JobFeed.clean(records, includeBenchRuns: true, staleAfter: 3600, now: Date()).count, 2)
+    }
+
+    func testOldRunningJobsBecomeStale() {
+        let cleaned = JobFeed.clean([record("old", status: .running, age: 7200), record("new", status: .running, age: 60)],
+                                    includeBenchRuns: false, staleAfter: 3600, now: Date())
+        XCTAssertEqual(cleaned.first { $0.id == "old" }?.status, .unknown)
+        XCTAssertTrue(cleaned.first { $0.id == "old" }?.summary.hasPrefix("No update for 2h") == true)
+        XCTAssertEqual(cleaned.first { $0.id == "new" }?.status, .running)
+    }
+
+    func testFolderPreviewListsFilesAndLogTail() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try "line one\nfinal verdict: clean".write(to: dir.appendingPathComponent("helga.log"), atomically: true, encoding: .utf8)
+        let preview = try XCTUnwrap(JobFeed.folderPreview(path: dir.path))
+        XCTAssertTrue(preview.contains("helga.log"))
+        XCTAssertTrue(preview.contains("final verdict: clean"))
+    }
+}

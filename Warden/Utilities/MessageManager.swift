@@ -533,6 +533,19 @@ final class MessageManager: ObservableObject {
                     return
                 }
                 
+                // A stream that ends with no text and no tool calls usually means the server didn't stream in a
+                // format we read (for example a plain JSON body). Say so instead of silently showing nothing.
+                if finalResponse.isEmpty {
+                    chat.waitingForResponse = false
+                    self.streamingAssistantText = ""
+                    completion(.failure(NSError(
+                        domain: "Workbench", code: 1,
+                        userInfo: [NSLocalizedDescriptionKey:
+                            "The model returned no text. If this provider doesn't support streaming, turn off streaming for it in Settings → API Services."]
+                    )))
+                    return
+                }
+
                 // Auto-rename chat if needed
                 generateChatNameIfNeeded(chat: chat)
                 chat.waitingForResponse = false
@@ -593,10 +606,17 @@ final class MessageManager: ObservableObject {
     ) -> (Result<Void, Error>) -> Void {
         let chatID = chat.id
         let name = chat.name.isEmpty ? "New chat" : chat.name
+        let started = Date()
+        Diagnostics.log("send chat=\(chatID) service=\(chat.apiService?.name ?? "-") type=\(chat.apiService?.type ?? "-") model=\(chat.gptModel) stream=\(chat.apiService?.useStreamResponse ?? false)")
         WorkbenchHub.shared.chatStarted(chatID, name: name)
         return { [weak chat] result in
             let preview = (chat?.lastMessage?.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             if let chat { WorkbenchTools.shared.finishTurn(chat: chat) }
+            let seconds = String(format: "%.1f", Date().timeIntervalSince(started))
+            switch result {
+            case .success: Diagnostics.log("done chat=\(chatID) after=\(seconds)s chars=\(preview.count)")
+            case .failure(let error): Diagnostics.log("fail chat=\(chatID) after=\(seconds)s error=\(error)")
+            }
             switch result {
             case .success:
                 WorkbenchHub.shared.chatFinished(chatID, name: name, preview: String(preview.prefix(200)))

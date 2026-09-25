@@ -33,7 +33,7 @@ struct WorkbenchInspector: View {
         VStack(spacing: 0) {
             Picker("", selection: $tab) {
                 ForEach(Tab.allCases) { tab in
-                    Image(systemName: tab.symbol).help(tab.help).tag(tab)
+                    Image(systemName: tab.symbol).help(tab.help).accessibilityLabel(tab.help).tag(tab)
                 }
             }
             .pickerStyle(.segmented)
@@ -207,6 +207,7 @@ private struct ProjectTab: View {
         }
         .onAppear(perform: loadSkills)
         .onChange(of: folders.paths) { _, _ in loadSkills() }
+        .onChange(of: chat.project) { _, _ in loadSkills() }
     }
 
     private func loadSkills() {

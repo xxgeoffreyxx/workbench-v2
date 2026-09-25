@@ -22,6 +22,7 @@ extension JobStatus {
     var label: String {
         switch self {
         case .needsReview: return "Needs review"
+        case .unknown: return "Stale"
         default: return rawValue.capitalized
         }
     }
@@ -32,6 +33,7 @@ struct JobsListView: View {
     @ObservedObject private var hub = WorkbenchHub.shared
     @State private var workflow: String = "All"
     @State private var query = ""
+    @AppStorage("workbench.jobs.showBenchRuns") private var showBenchRuns = false
 
     private var filtered: [JobRecord] {
         hub.jobs.filter { job in
@@ -85,6 +87,11 @@ struct JobsListView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
+                Toggle("Bench runs", isOn: $showBenchRuns)
+                    .toggleStyle(.checkbox)
+                    .controlSize(.small)
+                    .help("Include benchmark harness runs from ~/.hosaka/.bench-runs")
+                    .onChange(of: showBenchRuns) { _, _ in hub.refreshJobs() }
                 Button {
                     hub.refreshJobs()
                 } label: {
@@ -161,7 +168,20 @@ struct JobDetailView: View {
                         Text(job.summary).textSelection(.enabled)
                     }
                 }
-                if !job.output.isEmpty {
+                if job.output.isEmpty {
+                    if let preview = (job.taskPath ?? job.artifactPath).flatMap({ JobFeed.folderPreview(path: $0) }) {
+                        section("No output recorded — folder contents") {
+                            Text(preview)
+                                .font(.system(.callout, design: .monospaced))
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(12)
+                                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
+                        }
+                    } else {
+                        Text("This job recorded no output, and its folder is gone.").foregroundStyle(.secondary)
+                    }
+                } else {
                     section("Output") {
                         Text(job.output)
                             .font(.system(.callout, design: .monospaced))

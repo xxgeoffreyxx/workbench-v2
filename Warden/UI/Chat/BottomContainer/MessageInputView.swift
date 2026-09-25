@@ -1,6 +1,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import CoreData
+import WorkbenchKit
 
 struct ComposerState {
     var text: String = ""
@@ -78,11 +79,15 @@ struct MessageInputView: View {
     var body: some View {
         VStack(spacing: 0) {
             attachmentPreviewsSection
+                .onAppear {
+                    let chat = chat
+                    promptCompletion.skillsProvider = { WorkbenchTools.shared.catalog(for: chat).skills }
+                }
 
             VStack(alignment: .leading, spacing: 10) {
                 // "/" prompt-completion suggestions float above the text input
                 if promptCompletion.isVisible {
-                    PromptCompletionListView(state: promptCompletion) { prompt in
+                    PromptCompletionListView(state: promptCompletion, onSelect: { prompt in
                         if let newText = promptCompletion.acceptSelected(
                             currentText: state.text,
                             libraryManager: .shared,
@@ -90,7 +95,11 @@ struct MessageInputView: View {
                         ) {
                             state.text = newText
                         }
-                    }
+                    }, onSelectSkill: { skill in
+                        if let newText = promptCompletion.acceptSkill(skill, currentText: state.text) {
+                            state.text = newText
+                        }
+                    })
                     .padding(.bottom, 4)
                 }
 
@@ -175,6 +184,9 @@ struct MessageInputView: View {
                     Spacer()
                     
                     HStack(spacing: 12) {
+                        if let chat = chat {
+                            ProjectPickerButton(chat: chat)
+                        }
                         DictationButton(text: $state.text)
                         ScreenshotButton { url in
                             withAnimation {
@@ -188,7 +200,7 @@ struct MessageInputView: View {
 
                         // Model Selector
                         if let chat = chat {
-                            BetterCompactModelSelector(chat: chat)
+                            WorkbenchModelMenu(chat: chat)
                             ReasoningEffortMenu(chat: chat)
                         }
                         

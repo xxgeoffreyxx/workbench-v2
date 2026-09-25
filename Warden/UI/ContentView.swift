@@ -95,6 +95,7 @@ struct ContentView: View {
                         Image(systemName: "sidebar.right")
                     }
                     .help("Show or hide the inspector")
+                    .accessibilityLabel("Show or hide the inspector")
                     .disabled(sidebarMode != .chats || selectedChat == nil)
                 }
                 ToolbarItem(placement: .navigation) {

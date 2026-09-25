@@ -118,6 +118,7 @@ struct WardenApp: App {
         DatabasePatcher.migrateExistingConfiguration(context: persistenceController.container.viewContext)
         MainActor.assumeIsolated {
             WorkbenchProviders.ensureDefaults(context: persistenceController.container.viewContext)
+            UITestSupport.apply(context: persistenceController.container.viewContext)
         }
 
         // Seed the prompt library's starter prompts on first launch
@@ -357,6 +358,7 @@ struct WardenApp: App {
 
             // Skip if no API key (except for providers that don't require it)
             guard !apiKey.isEmpty || providerType == "ollama" || providerType == "lmstudio" || providerType == "codex"
+                || providerType == "workbench_router"
             else {
                 continue
             }

@@ -126,7 +126,50 @@ struct JobCommandResult {
 
 public enum JobFeed {
     /// Loads every job record: artifacts on disk, live processes and the jobs.jsonl event log.
-    public static func load() -> [JobRecord] { loadJobRecords() }
+    public static func load() -> [JobRecord] { load(includeBenchRuns: false) }
+
+    /// Benchmark harness runs live under `.bench-runs` and log a start event per run but rarely a finish, so they
+    /// would flood the feed with jobs stuck at "running". They're hidden unless asked for.
+    /// A job whose last event is "running" and older than `staleAfter` is reported as `.unknown` (stale).
+    public static func load(includeBenchRuns: Bool, staleAfter: TimeInterval = 6 * 3600, now: Date = Date()) -> [JobRecord] {
+        clean(loadJobRecords(), includeBenchRuns: includeBenchRuns, staleAfter: staleAfter, now: now)
+    }
+
+    static func clean(_ records: [JobRecord], includeBenchRuns: Bool, staleAfter: TimeInterval, now: Date) -> [JobRecord] {
+        records.compactMap { record in
+            if !includeBenchRuns, isBenchRun(record) { return nil }
+            var record = record
+            // Live process records are refreshed on every load, so they never go stale.
+            if record.status == .running, now.timeIntervalSince(record.updatedAt) > staleAfter, !record.id.hasPrefix("process:") {
+                record.status = .unknown
+                let hours = Int(now.timeIntervalSince(record.updatedAt) / 3600)
+                record.summary = "No update for \(hours)h; the job probably stopped without reporting. Last event: \(record.summary)"
+            }
+            return record
+        }
+    }
+
+    static func isBenchRun(_ record: JobRecord) -> Bool {
+        [record.taskPath, record.artifactPath].contains { $0?.contains("/.bench-runs/") == true }
+    }
+
+    /// What a job's folder holds, for jobs that recorded no output: the files, and the tail of the newest log.
+    public static func folderPreview(path: String, maxFiles: Int = 25) -> String? {
+        let url = URL(fileURLWithPath: path)
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: path, isDirectory: &isDir) else { return nil }
+        let folder = isDir.boolValue ? url : url.deletingLastPathComponent()
+        guard let items = try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey],
+                                                      options: [.skipsHiddenFiles]) else { return nil }
+        let sorted = items.sorted { newestFirst($0, $1) }
+        var lines = ["Files in \(folder.path):"] + sorted.prefix(maxFiles).map { "  " + $0.lastPathComponent }
+        if sorted.count > maxFiles { lines.append("  … \(sorted.count - maxFiles) more") }
+        if let log = sorted.first(where: { ["log", "txt", "md", "json"].contains($0.pathExtension) }) {
+            lines += ["", "Tail of \(log.lastPathComponent):", readTailText(log, limit: 3000)]
+        }
+        return lines.joined(separator: "\n")
+    }
 
     /// Records that are new or whose status changed between two snapshots (in `new` order).
     public static func diff(old: [JobRecord], new: [JobRecord]) -> [JobChange] {

@@ -120,18 +120,18 @@ struct SubmitTextEditor: NSViewRepresentable {
 
             switch command {
             case .moveDown:
-                guard !state.suggestions.isEmpty else { return false }
+                guard state.itemCount > 0 else { return false }
                 state.moveSelection(1)
                 return true
             case .moveUp:
-                guard !state.suggestions.isEmpty else { return false }
+                guard state.itemCount > 0 else { return false }
                 state.moveSelection(-1)
                 return true
             case .escape:
                 state.dismiss()
                 return true
             case .enter:
-                if state.suggestions.isEmpty { return false }
+                if state.itemCount == 0 { return false }
                 guard let newText = state.acceptSelected(
                     currentText: parent.text,
                     libraryManager: .shared

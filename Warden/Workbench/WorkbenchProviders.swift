@@ -2,49 +2,60 @@ import CoreData
 import Foundation
 import WorkbenchKit
 
-/// Seeds the providers Workbench needs on first launch: the local model router (Helga and the resident models)
-/// and, when a DashScope key is configured, Alibaba's cloud fallback. Both use Warden's OpenAI-compatible handler,
-/// so they get streaming, tools and the model picker for free.
+/// Seeds the providers Workbench needs: the local model router (Helga and the resident models) as the default
+/// for new chats, and Alibaba's DashScope when a key is configured. Each has its own provider type because
+/// Warden's model picker and model cache hold one service per type.
 enum WorkbenchProviders {
+    static let routerType = "workbench_router"
+    static let dashScopeType = "dashscope"
     static let routerName = "Workbench Router"
     static let dashScopeName = "DashScope"
-    private static let seededKey = "workbench.providersSeeded.v1"
+    private static let seededKey = "workbench.providersSeeded.v2"
 
     @MainActor
     static func ensureDefaults(context: NSManagedObjectContext) {
+        disableRouterStreaming(context: context)
         guard !UserDefaults.standard.bool(forKey: seededKey) else { return }
 
         let request = APIServiceEntity.fetchRequest() as! NSFetchRequest<APIServiceEntity>
         let existing = (try? context.fetch(request)) ?? []
-        let names = Set(existing.compactMap(\.name))
 
-        if !names.contains(routerName) {
-            let router = make(
-                name: routerName,
-                url: Workbench.routerBaseURL.appendingPathComponent("chat/completions"),
-                model: RouterModel.defaults.first?.modelID ?? "ornith",
-                context: context
-            )
-            // The router is the default service for new chats.
-            router.defaultAgent = 1
-        }
+        // v1 seeded both as "openai_custom"; move them onto their own types.
+        let router = existing.first { $0.type == routerType || $0.name == routerName }
+            ?? make(name: routerName, url: Workbench.routerBaseURL.appendingPathComponent("chat/completions"),
+                    model: RouterModel.defaults.first?.modelID ?? "ornith", context: context)
+        router.type = routerType
+        router.useStreamResponse = false
 
-        if !names.contains(dashScopeName), let key = DashScope.apiKey() {
-            let service = make(
-                name: dashScopeName,
-                url: URL(string: DashScope.baseURL + "/chat/completions")!,
-                model: "qwen-plus",
-                context: context
-            )
+        if let dashScope = existing.first(where: { $0.type == dashScopeType || $0.name == dashScopeName }) {
+            dashScope.type = dashScopeType
+        } else if let key = DashScope.apiKey() {
+            let service = make(name: dashScopeName, url: URL(string: DashScope.baseURL + "/chat/completions")!,
+                               model: "qwen-plus", context: context)
+            service.type = dashScopeType
             if let id = service.id?.uuidString { try? TokenManager.setToken(key, for: id) }
         }
 
         do {
             try context.save()
+            // New chats use the router unless the user picks another default in Settings → API Services.
+            UserDefaults.standard.set(router.objectID.uriRepresentation().absoluteString, forKey: "defaultApiService")
+            UserDefaults.standard.set(router.model, forKey: "gptModel")
             UserDefaults.standard.set(true, forKey: seededKey)
         } catch {
             WardenLog.coreData.error("Seeding Workbench providers failed: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    /// The router answers `stream: true` with one plain JSON body, which Warden's stream reader drops silently.
+    /// Until the router streams, request whole replies from it.
+    @MainActor
+    private static func disableRouterStreaming(context: NSManagedObjectContext) {
+        let request = APIServiceEntity.fetchRequest() as! NSFetchRequest<APIServiceEntity>
+        request.predicate = NSPredicate(format: "type == %@ AND useStreamResponse == YES", routerType)
+        guard let services = try? context.fetch(request), !services.isEmpty else { return }
+        services.forEach { $0.useStreamResponse = false }
+        try? context.save()
     }
 
     @MainActor

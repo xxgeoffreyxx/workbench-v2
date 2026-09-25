@@ -125,6 +125,7 @@ class BaseAPIHandler: APIService, @unchecked Sendable {
                         )
 
                         let (stream, response) = try await streamingSession.bytes(for: request)
+                        Diagnostics.log("stream-response provider=\(self.name) url=\(request.url?.absoluteString ?? "-") status=\((response as? HTTPURLResponse)?.statusCode ?? -1) type=\((response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type") ?? "-") auth=\(request.value(forHTTPHeaderField: "Authorization")?.count ?? 0)")
                         let result = self.handleAPIResponse(response, data: nil, error: nil)
 
                         switch result {

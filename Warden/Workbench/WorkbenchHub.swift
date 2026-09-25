@@ -67,7 +67,7 @@ final class WorkbenchHub: ObservableObject {
 
     func refreshJobs() {
         Task.detached(priority: .utility) {
-            let fresh = JobFeed.load()
+            let fresh = JobFeed.load(includeBenchRuns: UserDefaults.standard.bool(forKey: "workbench.jobs.showBenchRuns"))
             await MainActor.run { WorkbenchHub.shared.apply(jobs: fresh) }
         }
     }
