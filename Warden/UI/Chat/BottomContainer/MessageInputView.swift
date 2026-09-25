@@ -175,6 +175,17 @@ struct MessageInputView: View {
                     Spacer()
                     
                     HStack(spacing: 12) {
+                        DictationButton(text: $state.text)
+                        ScreenshotButton { url in
+                            withAnimation {
+                                if imageUploadsAllowed {
+                                    state.attachedImages.append(ImageAttachment(url: url))
+                                } else {
+                                    state.attachedFiles.append(FileAttachment(url: url))
+                                }
+                            }
+                        }
+
                         // Model Selector
                         if let chat = chat {
                             BetterCompactModelSelector(chat: chat)

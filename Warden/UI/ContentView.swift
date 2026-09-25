@@ -27,8 +27,8 @@ struct ContentView: View {
     @AppStorage("lastOpenedChatId") var lastOpenedChatId = ""
     @AppStorage("lastDonationPromptedVersion") private var lastDonationPromptedVersion = ""
     @AppStorage("lastDiscordPromptedVersion") private var lastDiscordPromptedVersion = ""
-    @AppStorage("shouldSuppressDonationPrompt") private var shouldSuppressDonationPrompt = false
-    @AppStorage("shouldSuppressDiscordInvite") private var shouldSuppressDiscordInvite = false
+    @AppStorage("shouldSuppressDonationPrompt") private var shouldSuppressDonationPrompt = true
+    @AppStorage("shouldSuppressDiscordInvite") private var shouldSuppressDiscordInvite = true
     @StateObject private var previewStateManager = PreviewStateManager()
 
     @State private var openedChatId: String? = nil
@@ -39,17 +39,64 @@ struct ContentView: View {
     @State private var showingEditProject = false
     @State private var projectToEdit: ProjectEntity?
 
+    // Workbench: Chats / Jobs sidebar and the right-hand inspector
+    @AppStorage("workbench.sidebarMode") private var sidebarMode: SidebarMode = .chats
+    @AppStorage("workbench.showInspector") private var showInspector = true
+    @ObservedObject private var hub = WorkbenchHub.shared
+
     var body: some View {
         ZStack {
             Color(nsColor: .controlBackgroundColor)
                 .ignoresSafeArea()
 
             NavigationSplitView {
-                sidebarContent
+                VStack(spacing: 0) {
+                    Picker("", selection: $sidebarMode) {
+                        ForEach(SidebarMode.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    switch sidebarMode {
+                    case .chats: sidebarContent
+                    case .jobs:
+                        JobsListView()
+                            .navigationSplitViewColumnWidth(min: 180, ideal: 240, max: 400)
+                    }
+                }
             } detail: {
-                detailView
+                Group {
+                    if sidebarMode == .jobs {
+                        if let job = hub.jobs.first(where: { $0.id == hub.selectedJobID }) {
+                            JobDetailView(job: job)
+                        } else {
+                            JobsEmptyDetail()
+                        }
+                    } else {
+                        detailView
+                    }
+                }
+                .inspector(isPresented: Binding(
+                    get: { showInspector && sidebarMode == .chats && selectedChat != nil },
+                    set: { showInspector = $0 }
+                )) {
+                    if let selectedChat {
+                        WorkbenchInspector(chat: selectedChat)
+                            .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
+                    }
+                }
             }
             .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        showInspector.toggle()
+                    } label: {
+                        Image(systemName: "sidebar.right")
+                    }
+                    .help("Show or hide the inspector")
+                    .disabled(sidebarMode != .chats || selectedChat == nil)
+                }
                 ToolbarItem(placement: .navigation) {
                     Button(action: newChat) {
                         Image(systemName: "square.and.pencil")
@@ -85,8 +132,22 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .openChatByID)) { notification in
             if let objectID = notification.userInfo?["chatObjectID"] as? NSManagedObjectID {
                 if let chat = viewContext.object(with: objectID) as? ChatEntity {
+                    sidebarMode = .chats
                     selectedChat = chat
                 }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .workbenchOpenJob)) { notification in
+            if let id = notification.userInfo?["id"] as? String {
+                sidebarMode = .jobs
+                hub.selectedJobID = id
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .workbenchOpenChat)) { notification in
+            if let id = (notification.userInfo?["id"] as? String).flatMap(UUID.init(uuidString:)),
+               let chat = chats.first(where: { $0.id == id }) {
+                sidebarMode = .chats
+                selectedChat = chat
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .openInlineSettings)) { _ in

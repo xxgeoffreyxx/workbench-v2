@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		B0B0B0B00000000000000004 /* WorkbenchKit in Frameworks */ = {isa = PBXBuildFile; productRef = B0B0B0B00000000000000003 /* WorkbenchKit */; };
 		066C487A4C4D90158727285C /* UsageTrackingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F6F0B7C0F3CD12F0C219424 /* UsageTrackingService.swift */; };
 		9E90CAF7EB7832BE1278D6CE /* PromptLibraryManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A795AF4334DC0A0A24A65315 /* PromptLibraryManager.swift */; };
 		6578702A99D87DCFE85988AD /* PromptCompletionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 505468F06FE848C40DB1C44D /* PromptCompletionView.swift */; };
@@ -409,6 +410,14 @@
 		E8A1B2C32F01000600A1B201 /* WardenOnboardingPresenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WardenOnboardingPresenter.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		B0B0B0B00000000000000001 /* Workbench */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Workbench;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
 /* Begin PBXFrameworksBuildPhase section */
 		4A399C9229BC8FEF00E98796 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
@@ -422,6 +431,7 @@
 				4A7E1BDB29C910F900E57DC2 /* Sparkle in Frameworks */,
 				4A51EC6529C32B0B00973D83 /* AttributedText in Frameworks */,
 				E8A1B2C32F01000300A1B201 /* TourKit in Frameworks */,
+				B0B0B0B00000000000000004 /* WorkbenchKit in Frameworks */,
 			);
 		};
 		4A399CA329BC8FF200E98796 /* Frameworks */ = {
@@ -741,6 +751,7 @@
 				4A399C9829BC8FEF00E98796 /* WardenApp.swift */,
 				4A98B1BF29CA60ED0064835A /* Info.plist */,
 				4A399C9E29BC8FF100E98796 /* Warden.entitlements */,
+				B0B0B0B00000000000000001 /* Workbench */,
 			);
 			path = Warden;
 			sourceTree = "<group>";
@@ -855,8 +866,12 @@
 			);
 			buildRules = (
 			);
+			fileSystemSynchronizedGroups = (
+				B0B0B0B00000000000000001 /* Workbench */,
+			);
 			name = Warden;
 			packageProductDependencies = (
+				B0B0B0B00000000000000003 /* WorkbenchKit */,
 				4A51EC6129C32AF700973D83 /* Highlightr */,
 				4A51EC6429C32B0B00973D83 /* AttributedText */,
 				4A7E1BDA29C910F900E57DC2 /* Sparkle */,
@@ -939,6 +954,7 @@
 			);
 			mainGroup = 4A399C8C29BC8FEF00E98796;
 			packageReferences = (
+				B0B0B0B00000000000000002 /* XCLocalSwiftPackageReference "WorkbenchKit" */,
 				4A51EC6029C32AF600973D83 /* XCRemoteSwiftPackageReference "Highlightr" */,
 				4A51EC6329C32B0B00973D83 /* XCRemoteSwiftPackageReference "AttributedText" */,
 				4A7E1BD929C910F800E57DC2 /* XCRemoteSwiftPackageReference "Sparkle" */,
@@ -1224,7 +1240,7 @@
 				COPY_PHASE_STRIP = NO;
 				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;
-				DEVELOPMENT_TEAM = ZRB8WDV435;
+				DEVELOPMENT_TEAM = "";
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -1288,7 +1304,7 @@
 				COPY_PHASE_STRIP = NO;
 				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				DEVELOPMENT_TEAM = ZRB8WDV435;
+				DEVELOPMENT_TEAM = "";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -1323,7 +1339,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 31;
 				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = 8S4248F6RV;
+				DEVELOPMENT_TEAM = "";
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_INCOMING_NETWORK_CONNECTIONS = YES;
@@ -1332,7 +1348,7 @@
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Warden/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = Warden;
+				INFOPLIST_KEY_CFBundleDisplayName = Workbench;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
@@ -1347,10 +1363,10 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MARKETING_VERSION = 1.09;
+				MARKETING_VERSION = 2.0;
 				ONLY_ACTIVE_ARCH = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = karatsidhu.WardenAI;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = me.mccaleb.Workbench;
+				PRODUCT_NAME = Workbench;
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = macosx;
 				SUPPORTS_MACCATALYST = NO;
@@ -1373,7 +1389,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 31;
 				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = 8S4248F6RV;
+				DEVELOPMENT_TEAM = "";
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_INCOMING_NETWORK_CONNECTIONS = YES;
@@ -1382,7 +1398,7 @@
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Warden/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = Warden;
+				INFOPLIST_KEY_CFBundleDisplayName = Workbench;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
@@ -1397,10 +1413,10 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MARKETING_VERSION = 1.09;
+				MARKETING_VERSION = 2.0;
 				ONLY_ACTIVE_ARCH = NO;
-				PRODUCT_BUNDLE_IDENTIFIER = karatsidhu.WardenAI;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = me.mccaleb.Workbench;
+				PRODUCT_NAME = Workbench;
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = macosx;
 				SUPPORTS_MACCATALYST = NO;
@@ -1417,19 +1433,19 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 0.9.4;
 				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = 8S4248F6RV;
+				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.2;
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = karatsidhu.WardenAITests;
+				PRODUCT_BUNDLE_IDENTIFIER = me.mccaleb.WorkbenchTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Warden.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Warden";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Workbench.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Workbench";
 			};
 			name = Debug;
 		};
@@ -1440,19 +1456,19 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 0.9.4;
 				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = 8S4248F6RV;
+				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.2;
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = karatsidhu.WardenAITests;
+				PRODUCT_BUNDLE_IDENTIFIER = me.mccaleb.WorkbenchTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Warden.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Warden";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Workbench.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Workbench";
 			};
 			name = Release;
 		};
@@ -1462,12 +1478,12 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = 8S4248F6RV;
+				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.2;
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = karatsidhu.WardenAIUITests;
+				PRODUCT_BUNDLE_IDENTIFIER = me.mccaleb.WorkbenchUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
@@ -1484,12 +1500,12 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = 8S4248F6RV;
+				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.2;
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = karatsidhu.WardenAIUITests;
+				PRODUCT_BUNDLE_IDENTIFIER = me.mccaleb.WorkbenchUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
@@ -1612,7 +1628,18 @@
 		};
 /* End XCRemoteSwiftPackageReference section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		B0B0B0B00000000000000002 /* XCLocalSwiftPackageReference "WorkbenchKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = WorkbenchKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
+		B0B0B0B00000000000000003 /* WorkbenchKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = WorkbenchKit;
+		};
 		4A2842482C87014800E5C920 /* KeychainAccess */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 4A2842472C87014800E5C920 /* XCRemoteSwiftPackageReference "KeychainAccess" */;

@@ -2,21 +2,21 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Workbench uses the microphone for dictation.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Workbench transcribes your dictation on this Mac.</string>
 	<key>ATSApplicationFontsPath</key>
 	<string>fonts</string>
 	<key>UIAppFonts</key>
 	<array>
 		<string>FiraCode-VF.ttf</string>
 	</array>
-	<key>SUFeedURL</key>
-	<string>https://raw.githubusercontent.com/SidhuK/WardenApp/main/appcast.xml</string>
 	<key>SUShowReleaseNotes</key>
 	<true/>
 	<key>SUAutomaticallyChecksForUpdates</key>
-	<true/>
+	<false/>
 	<key>SUEnableAutomaticChecks</key>
-	<true/>
-	<key>SUPublicEDKey</key>
-	<string>zy27GPZG8BbcdAin1+VMl7myxJzsh2+tXJiaL42ii3Y=</string>
+	<false/>
 </dict>
 </plist>

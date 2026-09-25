@@ -1,0 +1,61 @@
+import XCTest
+@testable import WorkbenchKit
+
+final class JobsTests: XCTestCase {
+    private func record(_ id: String, _ status: JobStatus) -> JobRecord {
+        JobRecord(id: id, project: "Scout", workflow: .peer, status: status, title: id, model: nil, host: nil, taskPath: nil, artifactPath: nil, summary: "", output: "", updatedAt: Date(timeIntervalSince1970: 0), eventCount: 0)
+    }
+
+    func testDiffReportsNewAndChangedOnly() {
+        let old = [record("a", .running), record("b", .complete)]
+        let new = [record("a", .complete), record("b", .complete), record("c", .failed)]
+        let changes = JobFeed.diff(old: old, new: new)
+        XCTAssertEqual(changes.map(\.record.id), ["a", "c"])
+        XCTAssertEqual(changes[0].previousStatus, .running)
+        XCTAssertNil(changes[1].previousStatus)
+        XCTAssertTrue(JobFeed.diff(old: new, new: new).isEmpty)
+    }
+
+    func testTaskTitleFromYamlThenMarkdown() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        XCTAssertNil(JobFeed.taskTitle(taskURL: dir))
+        try "# Fix the login bug\n\nBody".write(to: dir.appendingPathComponent("spec.md"), atomically: true, encoding: .utf8)
+        XCTAssertEqual(JobFeed.taskTitle(taskURL: dir), "Fix the login bug")
+        try "id: 1\ntitle: \"Ship the feed\"\n".write(to: dir.appendingPathComponent("task.yaml"), atomically: true, encoding: .utf8)
+        XCTAssertEqual(JobFeed.taskTitle(taskURL: dir), "Ship the feed")
+        let long = String(repeating: "x", count: 120)
+        try "title: \(long)\n".write(to: dir.appendingPathComponent("task.yaml"), atomically: true, encoding: .utf8)
+        XCTAssertEqual(JobFeed.taskTitle(taskURL: dir), String(repeating: "x", count: 90) + "...")
+    }
+
+    func testHosakaArtifactRecords() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let task = root.appendingPathComponent("tasks/done/T-1")
+        let evidence = task.appendingPathComponent("evidence")
+        try FileManager.default.createDirectory(at: evidence, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "title: Demo task\n".write(to: task.appendingPathComponent("task.yaml"), atomically: true, encoding: .utf8)
+        try #"{"verdict":"pass","reason":"ok","model":"ornith"}"#.write(to: evidence.appendingPathComponent("helga-verdict.json"), atomically: true, encoding: .utf8)
+        let records = JobFeed.hosakaArtifactRecords(project: "Scout", root: root.path)
+        XCTAssertEqual(records.count, 1)
+        XCTAssertEqual(records[0].id, "Scout:helga:T-1")
+        XCTAssertEqual(records[0].title, "Demo task")
+        XCTAssertEqual(records[0].status, .complete)
+        XCTAssertEqual(records[0].summary, "ok")
+    }
+
+    func testCommandArgumentParsing() {
+        let cmd = "node agentic-coding-bench.mjs --out /tmp/run --models=a,b"
+        XCTAssertEqual(JobFeed.commandArgument(after: "--out", in: cmd), "/tmp/run")
+        XCTAssertEqual(JobFeed.commandArgument(after: "--models", in: cmd), "a,b")
+    }
+
+    func testRLResearchHelpers() {
+        XCTAssertEqual(JobFeed.rlResearchRunBase("pi-api.2026.main.md"), "pi-api.2026")
+        XCTAssertEqual(JobFeed.rlResearchRunBase("x.2026.status.json"), "x.2026")
+        XCTAssertNil(JobFeed.rlResearchRunBase("plain.md"))
+        XCTAssertEqual(JobFeed.rlResearchTitle(from: "pi-api-rl.2026"), "PI API RL")
+    }
+}

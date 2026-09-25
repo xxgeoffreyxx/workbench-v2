@@ -1,6 +1,7 @@
 import CoreData
 import Foundation
 import MCP
+import WorkbenchKit
 import os
 
 @MainActor
@@ -241,9 +242,14 @@ final class MessageManager: ObservableObject {
         searchUrls: [String]? = nil,
         completion: @escaping (Result<Void, Error>) -> Void
     ) {
-        let requestMessages = prepareRequestMessages(userMessage: message, chat: chat, contextSize: contextSize)
+        let completion = workbenchCompletion(for: chat, completion)
+        let requestMessages = WorkbenchTools.shared.prepare(
+            prepareRequestMessages(userMessage: message, chat: chat, contextSize: contextSize),
+            userMessage: message,
+            chat: chat
+        )
         chat.waitingForResponse = true
-        let temperature = (chat.persona?.temperature ?? AppConstants.defaultTemperatureForChat).roundedToOneDecimal()
+        let temperature = (chat.persona?.temperature ?? (chat.temperature > 0 ? Float(chat.temperature) : AppConstants.defaultTemperatureForChat)).roundedToOneDecimal()
         
         // Fetch tools from selected MCP agents
         Task { @MainActor in
@@ -264,7 +270,7 @@ final class MessageManager: ObservableObject {
             #endif
             
             // Convert MCP Tool to OpenAI format
-            let toolDefinitions = tools.compactMap { tool -> [String: Any]? in
+            let toolDefinitions = WorkbenchTools.shared.toolDefinitions(for: chat) + tools.compactMap { tool -> [String: Any]? in
                 // Convert MCP Value inputSchema to JSON-compatible dictionary
                 let parameters = convertValueToDict(tool.inputSchema)
                 
@@ -341,8 +347,13 @@ final class MessageManager: ObservableObject {
         // Cancel any existing streaming task first
         stopStreaming()
         
-        let requestMessages = prepareRequestMessages(userMessage: message, chat: chat, contextSize: contextSize)
-        let temperature = (chat.persona?.temperature ?? AppConstants.defaultTemperatureForChat).roundedToOneDecimal()
+        let completion = workbenchCompletion(for: chat, completion)
+        let requestMessages = WorkbenchTools.shared.prepare(
+            prepareRequestMessages(userMessage: message, chat: chat, contextSize: contextSize),
+            userMessage: message,
+            chat: chat
+        )
+        let temperature = (chat.persona?.temperature ?? (chat.temperature > 0 ? Float(chat.temperature) : AppConstants.defaultTemperatureForChat)).roundedToOneDecimal()
 
         let streamTaskID = UUID()
         let streamTask = Task { @MainActor in
@@ -430,7 +441,7 @@ final class MessageManager: ObservableObject {
             WardenLog.app.debug("[MCP] Found \(tools.count, privacy: .public) tool(s) (stream)")
             #endif
             
-            let toolDefinitions = tools.compactMap { tool -> [String: Any]? in
+            let toolDefinitions = WorkbenchTools.shared.toolDefinitions(for: chat) + tools.compactMap { tool -> [String: Any]? in
                 // Convert MCP Value inputSchema to JSON-compatible dictionary
                 let parameters = convertValueToDict(tool.inputSchema)
                 
@@ -572,9 +583,38 @@ final class MessageManager: ObservableObject {
         }
     }
     
+    // MARK: - Workbench turn tracking
+
+    /// Wraps a send's completion so the menu bar shows the chat as busy, a notification can fire when it finishes,
+    /// and pending approvals for the turn are cleared.
+    private func workbenchCompletion(
+        for chat: ChatEntity,
+        _ completion: @escaping (Result<Void, Error>) -> Void
+    ) -> (Result<Void, Error>) -> Void {
+        let chatID = chat.id
+        let name = chat.name.isEmpty ? "New chat" : chat.name
+        WorkbenchHub.shared.chatStarted(chatID, name: name)
+        return { [weak chat] result in
+            let preview = (chat?.lastMessage?.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if let chat { WorkbenchTools.shared.finishTurn(chat: chat) }
+            switch result {
+            case .success:
+                WorkbenchHub.shared.chatFinished(chatID, name: name, preview: String(preview.prefix(200)))
+            case .failure(let error):
+                if error is CancellationError {
+                    ApprovalCenter.shared.denyAll()
+                    WorkbenchHub.shared.chatFinished(chatID, name: name, preview: "Stopped")
+                } else {
+                    WorkbenchHub.shared.chatFinished(chatID, name: name, preview: error.localizedDescription, failed: true)
+                }
+            }
+            completion(result)
+        }
+    }
+
     // MARK: - Tool Execution
     
-    private func handleToolCalls(_ toolCalls: [ToolCall], in chat: ChatEntity, contextSize: Int, completion: @escaping (Result<Void, Error>) -> Void) async {
+    private func handleToolCalls(_ toolCalls: [ToolCall], in chat: ChatEntity, contextSize: Int, round: Int = 1, completion: @escaping (Result<Void, Error>) -> Void) async {
         #if DEBUG
         WardenLog.app.debug("Handling \(toolCalls.count, privacy: .public) tool call(s)")
         #endif
@@ -594,9 +634,9 @@ final class MessageManager: ObservableObject {
         if let toolCallsData = try? JSONSerialization.data(withJSONObject: toolCallsDict, options: []),
            let toolCallsJsonString = String(data: toolCallsData, encoding: .utf8) {
             // Append assistant message with tool calls
-            chat.requestMessages.append(
-                RequestMessage(role: .assistant, toolCallsJson: toolCallsJsonString).dictionary
-            )
+            let assistantToolMessage = RequestMessage(role: .assistant, toolCallsJson: toolCallsJsonString).dictionary
+            chat.requestMessages.append(assistantToolMessage)
+            WorkbenchTools.shared.appendToTranscript(assistantToolMessage, chat: chat)
         }
         
         // Execute each tool call
@@ -634,7 +674,9 @@ final class MessageManager: ObservableObject {
                     }
                 }
                 
-                if let argsData = arguments.data(using: .utf8),
+                if WorkbenchTools.shared.handles(functionName) {
+                    resultString = await WorkbenchTools.shared.run(name: functionName, argumentsJSON: arguments, chat: chat)
+                } else if let argsData = arguments.data(using: .utf8),
                    let argsDict = try? JSONSerialization.jsonObject(with: argsData, options: []) as? [String: Any] {
                     let contentArray = try await MCPManager.shared.callTool(name: functionName, arguments: argsDict)
                     
@@ -679,14 +721,14 @@ final class MessageManager: ObservableObject {
             #endif
             
             // Append tool result message
-            chat.requestMessages.append(
-                RequestMessage(
-                    role: .tool,
-                    content: resultString,
-                    name: functionName,
-                    toolCallId: callId
-                ).dictionary
-            )
+            let toolResultMessage = RequestMessage(
+                role: .tool,
+                content: resultString,
+                name: functionName,
+                toolCallId: callId
+            ).dictionary
+            chat.requestMessages.append(toolResultMessage)
+            WorkbenchTools.shared.appendToTranscript(toolResultMessage, chat: chat)
         }
         
         // Clear tool call status after all tools complete
@@ -695,14 +737,32 @@ final class MessageManager: ObservableObject {
             self.toolCallStatus = nil
         }
         
-        // Now send the conversation again to get the final response
-        let requestMessages = Array(chat.requestMessages.suffix(contextSize))
-        let temperature = (chat.persona?.temperature ?? AppConstants.defaultTemperatureForChat).roundedToOneDecimal()
+        // Now send the conversation again. Workbench keeps the whole turn (system prompt, skill, tool results) so
+        // multi-step work doesn't lose its instructions; the model may call tools again until the round limit.
+        let requestMessages = WorkbenchTools.shared.transcript(for: chat) ?? Array(chat.requestMessages.suffix(contextSize))
+        let roundLimit = WorkbenchTools.shared.maxRounds(for: chat)
+        let followUpTools: [[String: Any]]? = await {
+            guard round < roundLimit else { return nil }
+            let selectedAgents = ChatViewModel(chat: chat, viewContext: self.viewContext).selectedMCPAgents
+            let mcpTools = await MCPManager.shared.getTools(for: selectedAgents).map { tool -> [String: Any] in
+                [
+                    "type": "function",
+                    "function": [
+                        "name": tool.name,
+                        "description": tool.description ?? "",
+                        "parameters": self.convertValueToDict(tool.inputSchema),
+                    ] as [String: Any],
+                ]
+            }
+            let all = WorkbenchTools.shared.toolDefinitions(for: chat) + mcpTools
+            return all.isEmpty ? nil : all
+        }()
+        let temperature = (chat.persona?.temperature ?? (chat.temperature > 0 ? Float(chat.temperature) : AppConstants.defaultTemperatureForChat)).roundedToOneDecimal()
         
         ChatService.shared.sendMessage(
             apiService: apiService,
             messages: requestMessages,
-            tools: nil, // Don't provide tools again to avoid loops
+            tools: followUpTools, // nil once the round limit is reached, which forces a final answer
             settings: GenerationSettings(temperature: temperature, reasoningEffort: chat.reasoningEffort),
             chatID: chat.id
         ) { [weak self] result in
@@ -718,7 +778,19 @@ final class MessageManager: ObservableObject {
                 }
 
                 switch result {
-                case .success(let (fullMessage, _)):
+                case .success(let (fullMessage, moreToolCalls)):
+                    if let moreToolCalls, !moreToolCalls.isEmpty, round < roundLimit {
+                        if let messageText = fullMessage, !messageText.isEmpty {
+                            self.addMessageToChat(chat: chat, message: messageText, searchUrls: nil, toolCalls: self.activeToolCalls)
+                            self.activeToolCalls.removeAll()
+                        }
+                        Task {
+                            await self.handleToolCalls(
+                                moreToolCalls, in: chat, contextSize: contextSize, round: round + 1, completion: completion
+                            )
+                        }
+                        return
+                    }
                     if let messageText = fullMessage {
                         // Store the tool calls with this message for persistence
                         let toolCallsToStore = self.activeToolCalls

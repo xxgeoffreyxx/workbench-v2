@@ -20,7 +20,7 @@ final class UpdaterManager: ObservableObject {
         // SPUStandardUpdaterController handles the full update lifecycle:
         // checking, downloading, showing release notes, and installing
         updaterController = SPUStandardUpdaterController(
-            startingUpdater: true,
+            startingUpdater: false,  // Workbench has no update feed yet; never pull Warden builds
             updaterDelegate: nil,
             userDriverDelegate: nil
         )

@@ -274,6 +274,10 @@ struct ChatBubbleView: View {
                 copyMessageToClipboard(content.message)
             }
 
+            if !content.own && !content.systemMessage && content.errorMessage == nil {
+                ReadAloudButton(text: content.message, id: "\(message?.id ?? 0)-\(content.message.count)")
+            }
+
             if !content.systemMessage {
                 ToolbarButton(icon: "trash", text: "") {
                     showingDeleteConfirmation = true

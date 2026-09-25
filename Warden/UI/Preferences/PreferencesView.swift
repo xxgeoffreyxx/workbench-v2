@@ -10,7 +10,9 @@ enum PreferencesTabs: String, CaseIterable, Identifiable {
     case usageTracking = "Usage"
     case tools = "Tools"
     case keyboardShortcuts = "Keyboard Shortcuts"
-    case contributions = "Contributions"
+    case models = "Models"
+    case notifications = "Notifications"
+    case workbenchImport = "Import"
 
     var id: String { rawValue }
 
@@ -23,7 +25,9 @@ enum PreferencesTabs: String, CaseIterable, Identifiable {
         case .usageTracking: return "chart.bar.fill"
         case .tools: return "wrench.and.screwdriver.fill"
         case .keyboardShortcuts: return "keyboard.fill"
-        case .contributions: return "heart.fill"
+        case .models: return "cpu.fill"
+        case .notifications: return "bell.badge.fill"
+        case .workbenchImport: return "square.and.arrow.down.fill"
         }
     }
 
@@ -36,7 +40,9 @@ enum PreferencesTabs: String, CaseIterable, Identifiable {
         case .usageTracking: return .mint
         case .tools: return .orange
         case .keyboardShortcuts: return .green
-        case .contributions: return .pink
+        case .models: return .indigo
+        case .notifications: return .red
+        case .workbenchImport: return .brown
         }
     }
 }
@@ -106,8 +112,13 @@ struct SettingsDetailView: View {
                 TabToolsView()
             case .keyboardShortcuts:
                 TabHotkeysView()
-            case .contributions:
-                TabContributionsView()
+            case .models:
+                WorkbenchModelsSettings()
+            case .notifications:
+                WorkbenchNotificationSettings()
+            case .workbenchImport:
+                WorkbenchImportSettings()
+                    .environment(\.managedObjectContext, viewContext)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
