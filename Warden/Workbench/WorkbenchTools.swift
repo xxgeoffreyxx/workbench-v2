@@ -106,7 +106,10 @@ final class WorkbenchTools {
         activeSkills[chat.id] != nil ? Self.maxRoundsWithSkill : Self.maxRounds
     }
 
-    private func isCodex(_ chat: ChatEntity) -> Bool { chat.apiService?.type == "codex" }
+    /// Codex and the agent CLIs bring their own tools.
+    private func isCodex(_ chat: ChatEntity) -> Bool {
+        chat.apiService?.type == "codex" || AgentCLI(rawValue: chat.apiService?.type ?? "") != nil
+    }
 
     // MARK: - Turn setup
 

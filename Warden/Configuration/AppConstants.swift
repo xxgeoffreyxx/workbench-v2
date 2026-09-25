@@ -633,12 +633,14 @@ Remember that true productivity serves your overall life satisfaction and well-b
         "lmstudio": defaultApiConfiguration(name: "LM Studio", url: "http://localhost:1234/v1/chat/completions", apiKeyRef: "https://lmstudio.ai/docs/api/openai-api", apiModelRef: "https://lmstudio.ai/docs/local-server", defaultModel: "local-model", models: ["local-model"], inherits: "chatgpt"),
         "workbench_router": defaultApiConfiguration(name: "Workbench Router", url: "http://127.0.0.1:8110/v1/chat/completions", apiKeyRef: "", apiModelRef: "", defaultModel: "ornith", models: ["ornith"], inherits: "chatgpt", modelsFetching: true),
         "dashscope": defaultApiConfiguration(name: "DashScope", url: "https://dashscope-us.aliyuncs.com/compatible-mode/v1/chat/completions", apiKeyRef: "https://www.alibabacloud.com/help/en/model-studio/get-api-key", apiModelRef: "https://www.alibabacloud.com/help/en/model-studio/models", defaultModel: "qwen-plus", models: ["qwen-plus", "qwen-max", "qwen-turbo", "qwen3-coder-plus"], inherits: "chatgpt", modelsFetching: true),
+        "pi_agent": defaultApiConfiguration(name: "pi (agent)", url: "stdio://pi", apiKeyRef: "", apiModelRef: "https://github.com/badlogic/pi-mono", defaultModel: "workbench/ornith", models: ["workbench/ornith"], modelsFetching: true),
+        "omp_agent": defaultApiConfiguration(name: "oh-my-pi (agent)", url: "stdio://omp", apiKeyRef: "", apiModelRef: "https://github.com/can1357/oh-my-pi", defaultModel: "workbench/ornith", models: ["workbench/ornith"], modelsFetching: true),
         "openai_custom": defaultApiConfiguration(name: "OpenAI Compatible", url: "", apiKeyRef: "", apiModelRef: "", defaultModel: "", models: [], inherits: "chatgpt", modelsFetching: true, imageUploadsSupported: true),
     ]
 
     /// A list of available API types.
     static let apiTypes = [
-        "workbench_router", "dashscope", "chatgpt", "codex", "ollama", "claude", "xai", "gemini", "perplexity", "deepseek", "pollinations", "fireworks", "openrouter", "groq",
+        "workbench_router", "dashscope", "pi_agent", "omp_agent", "chatgpt", "codex", "ollama", "claude", "xai", "gemini", "perplexity", "deepseek", "pollinations", "fireworks", "openrouter", "groq",
         "mistral", "lmstudio", "openai_custom",
     ]
 

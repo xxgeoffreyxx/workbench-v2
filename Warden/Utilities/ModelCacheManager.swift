@@ -227,7 +227,7 @@ final class ModelCacheManager: ObservableObject {
     
     private func hasValidToken(for service: APIServiceEntity) -> Bool {
         // The local router needs no key.
-        if service.type == "codex" || service.type == "workbench_router" {
+        if service.type == "codex" || service.type == "workbench_router" || AgentCLI(rawValue: service.type ?? "") != nil {
             return true
         }
 

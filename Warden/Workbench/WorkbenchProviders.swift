@@ -14,7 +14,7 @@ enum WorkbenchProviders {
 
     @MainActor
     static func ensureDefaults(context: NSManagedObjectContext) {
-        disableRouterStreaming(context: context)
+        upgradeToV3(context: context)
         guard !UserDefaults.standard.bool(forKey: seededKey) else { return }
 
         let request = APIServiceEntity.fetchRequest() as! NSFetchRequest<APIServiceEntity>
@@ -25,7 +25,6 @@ enum WorkbenchProviders {
             ?? make(name: routerName, url: Workbench.routerBaseURL.appendingPathComponent("chat/completions"),
                     model: RouterModel.defaults.first?.modelID ?? "ornith", context: context)
         router.type = routerType
-        router.useStreamResponse = false
 
         if let dashScope = existing.first(where: { $0.type == dashScopeType || $0.name == dashScopeName }) {
             dashScope.type = dashScopeType
@@ -47,15 +46,22 @@ enum WorkbenchProviders {
         }
     }
 
-    /// The router answers `stream: true` with one plain JSON body, which Warden's stream reader drops silently.
-    /// Until the router streams, request whole replies from it.
+    /// v3: the router streams now (patched 2026-09-25), so turn streaming back on for it, and add pi / oh-my-pi
+    /// services for whichever agent CLIs are installed.
     @MainActor
-    private static func disableRouterStreaming(context: NSManagedObjectContext) {
+    private static func upgradeToV3(context: NSManagedObjectContext) {
+        let key = "workbench.providersSeeded.v3"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
         let request = APIServiceEntity.fetchRequest() as! NSFetchRequest<APIServiceEntity>
-        request.predicate = NSPredicate(format: "type == %@ AND useStreamResponse == YES", routerType)
-        guard let services = try? context.fetch(request), !services.isEmpty else { return }
-        services.forEach { $0.useStreamResponse = false }
-        try? context.save()
+        let existing = (try? context.fetch(request)) ?? []
+        existing.filter { $0.type == routerType }.forEach { $0.useStreamResponse = true }
+        for cli in AgentCLI.allCases where cli.executableURL != nil && !existing.contains(where: { $0.type == cli.rawValue }) {
+            let service = make(name: cli.displayName, url: URL(string: "stdio://\(cli.executableName)")!,
+                               model: "workbench/ornith", context: context)
+            service.type = cli.rawValue
+            service.generateChatNames = false
+        }
+        if (try? context.save()) != nil { UserDefaults.standard.set(true, forKey: key) }
     }
 
     @MainActor

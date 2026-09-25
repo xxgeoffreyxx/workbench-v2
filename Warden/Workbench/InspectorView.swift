@@ -156,6 +156,7 @@ private struct ProjectTab: View {
     @ObservedObject private var folders = ProjectFolders.shared
     @AppStorage("workbench.tools.enabled") private var toolsEnabled = true
     @State private var skills: [Skill] = []
+    @State private var agentWritesTick = 0
 
     private var folder: URL? { folders.folder(for: chat.project) }
 
@@ -185,6 +186,14 @@ private struct ProjectTab: View {
                 }
                 Toggle("Workbench tools", isOn: $toolsEnabled)
                     .help("Offer file, command, web and skill tools to models in project chats")
+                if let project = chat.project {
+                    Toggle("pi / oh-my-pi may edit files and run commands", isOn: Binding(
+                        get: { AgentCLIContext.allowWrites(for: project) },
+                        set: { AgentCLIContext.setAllowWrites($0, for: project); agentWritesTick += 1 }
+                    ))
+                    .id(agentWritesTick)
+                    .help("Off: agents only get their read and search tools. On: they run their own edit and shell tools without asking.")
+                }
             }
 
             Card(title: "Skills", footnote: "Type /name in the message box to run one with the current model.") {

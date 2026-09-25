@@ -609,6 +609,11 @@ final class MessageManager: ObservableObject {
         let started = Date()
         Diagnostics.log("send chat=\(chatID) service=\(chat.apiService?.name ?? "-") type=\(chat.apiService?.type ?? "-") model=\(chat.gptModel) stream=\(chat.apiService?.useStreamResponse ?? false)")
         WorkbenchHub.shared.chatStarted(chatID, name: name)
+        AgentCLIContext.current = .init(
+            chatID: chatID,
+            folder: ProjectFolders.shared.folder(for: chat.project),
+            allowWrites: AgentCLIContext.allowWrites(for: chat.project)
+        )
         return { [weak chat] result in
             let preview = (chat?.lastMessage?.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             if let chat { WorkbenchTools.shared.finishTurn(chat: chat) }

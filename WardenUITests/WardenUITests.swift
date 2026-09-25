@@ -128,6 +128,26 @@ final class WorkbenchUITests: XCTestCase {
         XCTAssertTrue(waitForText("42", timeout: 180), "no reply from Helga after switching providers")
     }
 
+    /// pi and oh-my-pi run as agents in the project folder, using Helga through the router.
+    func runAgent(section index: Int, name: String) {
+        newChat()
+        useTestProject()
+        app.popUpButtons["Ornith (Helga)"].click()
+        let items = app.menuItems.matching(identifier: "workbench/ornith")
+        let byTitle = app.menuItems.matching(NSPredicate(format: "title == 'workbench/ornith'"))
+        let pick = byTitle.count > index ? byTitle.element(boundBy: index) : items.element(boundBy: index)
+        XCTAssertTrue(pick.waitForExistence(timeout: 10), "\(name) model missing from the dropdown")
+        pick.click()
+        send("Use your ls tool to list the current folder, then tell me the name of the only markdown file there.")
+        let ok = waitForText("README.md", timeout: 300)
+        if !ok { dump(name) }
+        XCTAssertTrue(ok, "\(name) didn't list the project folder")
+        XCTAssertTrue(waitForText("▸", timeout: 2), "\(name)'s tool call wasn't shown")
+    }
+
+    func testPiAgent() throws { runAgent(section: 0, name: "pi") }
+    func testOmpAgent() throws { runAgent(section: 1, name: "omp") }
+
     func testDashScopeReplies() throws {
         newChat()
         app.popUpButtons["Ornith (Helga)"].click()

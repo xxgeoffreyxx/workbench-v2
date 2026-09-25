@@ -37,6 +37,10 @@ class APIServiceFactory {
     }()
 
     static func createAPIService(config: APIServiceConfiguration) -> APIService {
+        // Workbench: pi / oh-my-pi run as local agent processes rather than HTTP providers.
+        if let cli = AgentCLI(rawValue: config.name.lowercased()) {
+            return AgentCLIHandler(cli: cli, model: config.model)
+        }
         let configName =
             AppConstants.defaultApiConfigurations[config.name.lowercased()]?.inherits ?? config.name.lowercased()
 
