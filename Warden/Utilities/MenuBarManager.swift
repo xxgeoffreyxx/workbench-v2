@@ -74,8 +74,9 @@ final class MenuBarManager: NSObject, NSMenuDelegate {
     private func renderIcon() {
         guard let button = statusItem?.button else { return }
         button.toolTip = "Workbench · \(statusText)"
-        let base = NSImage(named: "MenuBarIcon")
-            ?? NSImage(systemSymbolName: "hammer", accessibilityDescription: "Workbench")!
+        let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
+        let base = NSImage(systemSymbolName: "wrench.and.screwdriver", accessibilityDescription: "Workbench")!
+            .withSymbolConfiguration(config)!
         guard let color = dotColor else {
             base.isTemplate = true
             button.image = base
