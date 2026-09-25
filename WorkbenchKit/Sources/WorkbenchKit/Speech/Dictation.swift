@@ -18,6 +18,8 @@ public enum DictationError: LocalizedError {
 /// Requires NSSpeechRecognitionUsageDescription and NSMicrophoneUsageDescription in Info.plist.
 public final class Dictation: ObservableObject {
     @Published public private(set) var isRecording = false
+    /// The microphone the current or last dictation used.
+    @Published public private(set) var deviceName: String?
 
     private let recognizer: SFSpeechRecognizer?
     /// Created only while dictating: an idle engine is enough to light the microphone indicator.
@@ -48,6 +50,14 @@ public final class Dictation: ObservableObject {
 
         let engine = AVAudioEngine()
         let input = engine.inputNode
+        // Listen to the chosen device rather than blindly to the system default (which can be a closed laptop's mic).
+        if let device = AudioInputs.resolve(preferredUID: UserDefaults.standard.string(forKey: AudioInputs.preferenceKey)),
+           let unit = input.audioUnit {
+            var id = device.id
+            AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
+                                 &id, UInt32(MemoryLayout<AudioDeviceID>.size))
+            deviceName = device.name
+        }
         let format = input.outputFormat(forBus: 0)
         // A zero format (no input device, or access denied) makes installTap raise an Objective-C exception.
         guard format.sampleRate > 0, format.channelCount > 0 else {

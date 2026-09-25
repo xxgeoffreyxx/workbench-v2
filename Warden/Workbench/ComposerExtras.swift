@@ -9,6 +9,7 @@ struct DictationButton: View {
     @StateObject private var dictation = Dictation()
     @State private var baseText = ""
     @State private var errorMessage: String?
+    @AppStorage(AudioInputs.preferenceKey) private var preferredUID = ""
 
     var body: some View {
         Button(action: toggle) {
@@ -17,8 +18,25 @@ struct DictationButton: View {
                 .symbolEffect(.pulse, isActive: dictation.isRecording)
         }
         .buttonStyle(.plain)
-        .help(dictation.isRecording ? "Stop dictation" : "Dictate")
+        .help(dictation.isRecording
+              ? "Stop dictation (\(dictation.deviceName ?? "microphone"))"
+              : "Dictate with \(AudioInputs.resolve(preferredUID: preferredUID.isEmpty ? nil : preferredUID)?.name ?? "the default microphone"). Right-click to choose a microphone.")
         .accessibilityLabel("Dictation")
+        .contextMenu {
+            Button {
+                preferredUID = ""
+            } label: {
+                if preferredUID.isEmpty { Label("Automatic", systemImage: "checkmark") } else { Text("Automatic") }
+            }
+            Divider()
+            ForEach(AudioInputs.all().filter { !$0.isVirtual }) { input in
+                Button {
+                    preferredUID = input.uid
+                } label: {
+                    if preferredUID == input.uid { Label(input.name, systemImage: "checkmark") } else { Text(input.name) }
+                }
+            }
+        }
         .alert("Dictation unavailable", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
             Button("OK") {}
         } message: {
