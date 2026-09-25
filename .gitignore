@@ -100,23 +100,3 @@ utlitlies_plan.md
 UI_plan.md
 .tmp/
 .home/Library/Logs/CoreSimulator/CoreSimulator.com.apple.dt.xcodebuild.log
-
-# >>> Glyph Git Sync >>>
-.glyph/
-*
-!*/
-!*.md
-!.gitignore
-!Warden/Assets.xcassets/tour-chat.imageset/
-!Warden/Assets.xcassets/tour-chat.imageset/**
-!Warden/Assets.xcassets/tour-providers.imageset/
-!Warden/Assets.xcassets/tour-providers.imageset/**
-!Warden/Assets.xcassets/tour-project-template.imageset/
-!Warden/Assets.xcassets/tour-project-template.imageset/**
-!Warden/Assets.xcassets/tour-projects.imageset/
-!Warden/Assets.xcassets/tour-projects.imageset/**
-!Warden/Assets.xcassets/tour-assistants.imageset/
-!Warden/Assets.xcassets/tour-assistants.imageset/**
-!Warden/Assets.xcassets/tour-new-assistant.imageset/
-!Warden/Assets.xcassets/tour-new-assistant.imageset/**
-# <<< Glyph Git Sync <<<
