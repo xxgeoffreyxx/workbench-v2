@@ -71,7 +71,7 @@ final class WorkbenchUITests: XCTestCase {
     /// Waits for any text on screen containing `needle` (replies render as static text or text views).
     @discardableResult
     func waitForText(_ needle: String, timeout: TimeInterval) -> Bool {
-        let predicate = NSPredicate(format: "value CONTAINS %@ OR label CONTAINS %@", needle, needle)
+        let predicate = NSPredicate(format: "value CONTAINS[c] %@ OR label CONTAINS[c] %@", needle, needle)
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if app.staticTexts.containing(predicate).firstMatch.exists || app.textViews.containing(predicate).firstMatch.exists {
@@ -147,6 +147,14 @@ final class WorkbenchUITests: XCTestCase {
 
     func testPiAgent() throws { runAgent(section: 0, name: "pi") }
     func testOmpAgent() throws { runAgent(section: 1, name: "omp") }
+
+    /// Helga must not claim to be Claude or a cloud service.
+    func testHelgaKnowsWhatItIs() throws {
+        newChat()
+        send("In one sentence: who are you, and where are you running?")
+        XCTAssertTrue(waitForText("m1max", timeout: 180), "Helga didn't say it runs locally on m1max")
+        XCTAssertFalse(waitForText("Anthropic", timeout: 2), "Helga still claims to be made by Anthropic")
+    }
 
     func testDashScopeReplies() throws {
         newChat()

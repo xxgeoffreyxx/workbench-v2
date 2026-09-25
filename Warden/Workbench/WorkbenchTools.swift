@@ -119,6 +119,24 @@ final class WorkbenchTools {
         var messages = messages
         var notes: [String] = []
 
+        // Local models often claim to be whichever assistant wrote their training data. Tell them what they are.
+        if chat.apiService?.type == WorkbenchProviders.routerType {
+            let entry = WorkbenchHub.shared.routerModels.first { $0.modelID == chat.gptModel }
+            let title = entry?.title ?? chat.gptModel
+            // The router's /health lists the host; before that has loaded, fall back to the default model's entry.
+            let resident = WorkbenchHub.shared.residentModels.first { $0.canonical == chat.gptModel }
+                ?? WorkbenchHub.shared.residentModels.first
+            let subtitleHost = (entry ?? RouterModel.defaults.first { $0.modelID == chat.gptModel })?
+                .subtitle.components(separatedBy: " · ").dropFirst().first
+            let host = (resident?.host ?? subtitleHost).map { "the Mac \"\($0)\"" } ?? "a Mac on Geoffrey's network"
+            notes.append("""
+            IDENTITY: You are \(title) (model id "\(chat.gptModel)"), an open-weight model running locally on \(host), \
+            reached through Geoffrey's Thunderbolt MLX router at \(Workbench.routerBaseURL.absoluteString). You are not \
+            Claude, ChatGPT or any cloud service, and nothing you process leaves Geoffrey's machines. If asked who or \
+            where you are, say exactly that.
+            """)
+        }
+
         if let folder = ProjectFolders.shared.folder(for: chat.project), toolsEnabled {
             notes.append("""
             WORKBENCH PROJECT FOLDER: \(folder.path)
