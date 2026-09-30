@@ -44,7 +44,7 @@ final class MenuFeedTests: XCTestCase {
     }
 
     func testJobDetailShowsWorkflowAndElapsed() {
-        XCTAssertEqual(MenuFeed.items(jobs: [job("r", .helga, .running, ago: 300)], chats: [], now: now)[0].detail, "Helga · 5m")
+        XCTAssertEqual(MenuFeed.items(jobs: [job("r", .helga, .running, ago: 300)], chats: [], now: now)[0].detail, "Helga · Started: 5m ago")
     }
 
     func testChatsAppearOnlyWithAnUnreadReply() {
@@ -69,13 +69,26 @@ final class MenuFeedTests: XCTestCase {
 
 final class MenuLayoutTests: XCTestCase {
     func testMenuOrder() {
-        XCTAssertEqual(MenuLayout.order, [.running, .separator, .models, .refreshStatus, .separator, .open, .settings, .quit])
+        XCTAssertEqual(MenuLayout.order, [.running, .separator, .models, .separator, .open, .settings, .quit])
         XCTAssertFalse(MenuLayout.order.contains(.newChat))
         XCTAssertFalse(MenuLayout.order.contains(.quickChat))
+        XCTAssertFalse(MenuLayout.order.contains(.refreshStatus))
     }
 
     func testOpenIsTitledOpenWithCommandO() {
         XCTAssertEqual(MenuLayout.Slot.open.title, "Open")
         XCTAssertEqual(MenuLayout.Slot.open.key, "o")
+    }
+}
+
+final class MenuStartedTests: XCTestCase {
+    func testRunningItemShowsStartedFromStartTime() {
+        let now = Date(timeIntervalSince1970: 100_000)
+        var job = JobRecord(id: "j", project: "S", workflow: .helga, status: .running, title: "J", model: nil, host: nil,
+                            taskPath: nil, artifactPath: nil, summary: "", output: "", updatedAt: now.addingTimeInterval(-10), eventCount: 1)
+        job.startedAt = now.addingTimeInterval(-300)
+        XCTAssertEqual(MenuFeed.items(jobs: [job], chats: [], now: now)[0].detail, "Helga · Started: 5m ago")
+        job.startedAt = now
+        XCTAssertEqual(MenuFeed.items(jobs: [job], chats: [], now: now)[0].detail, "Helga · Started: now")
     }
 }

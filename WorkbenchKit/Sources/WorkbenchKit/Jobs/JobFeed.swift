@@ -77,6 +77,8 @@ public struct JobRecord: Identifiable, Hashable, Sendable {
     public var output: String
     public var updatedAt: Date
     public var eventCount: Int
+    /// When the current run began (the event that moved the job into running). nil when unknown.
+    public var startedAt: Date? = nil
 
     public init(id: String, project: String, workflow: JobWorkflow, status: JobStatus, title: String, model: String?, host: String?, taskPath: String?, artifactPath: String?, summary: String, output: String, updatedAt: Date, eventCount: Int) {
         self.id = id
@@ -153,10 +155,15 @@ public enum JobFeed {
     static func isBenchRun(_ record: JobRecord) -> Bool {
         [record.taskPath, record.artifactPath].contains { path in
             guard let path else { return false }
-            return path.contains("/.bench-runs/") || tempPrefixes.contains { path.hasPrefix($0) }
+            // Helga harness fixtures: pass/reject/error-task folders in a temp dir. Other temp paths are real jobs
+            // that briefly ran from /tmp and must stay visible.
+            let isFixture = tempPrefixes.contains { path.hasPrefix($0) }
+                && fixtureTaskNames.contains(URL(fileURLWithPath: path).lastPathComponent)
+            return path.contains("/.bench-runs/") || isFixture
         }
     }
 
+    static let fixtureTaskNames: Set<String> = ["pass-task", "reject-task", "error-task"]
     static let tempPrefixes = ["/var/folders/", "/private/var/folders/", "/tmp/", "/private/tmp/"]
 
     /// Workflow plus task/run id, case-insensitive, so "scout:peer:adhoc-1" and "Scout:peer:adhoc-1" are one job.
@@ -280,7 +287,7 @@ public enum JobFeed {
                 title: artifact?.title ?? event.title,
                 model: event.model ?? existing?.model,
                 host: event.host ?? existing?.host,
-                taskPath: artifact?.taskPath ?? event.taskPath ?? existing?.taskPath,
+                taskPath: latestExisting(event.taskPath) ?? artifact?.taskPath ?? event.taskPath ?? existing?.taskPath,
                 artifactPath: artifact?.artifactPath ?? event.artifactPath ?? existing?.artifactPath,
                 summary: artifact.flatMap { eventIsNewer && event.status == .running ? nil : $0.summary }
                     ?? event.summary ?? existing?.summary ?? event.status.rawValue,
@@ -289,6 +296,11 @@ public enum JobFeed {
                 updatedAt: max(event.timestamp, existing?.updatedAt ?? .distantPast),
                 eventCount: (existing?.eventCount ?? 0) + 1
             )
+            // Start of the current run: the event that moved it into running; kept while it stays running.
+            if event.status == .running {
+                recordsByID[event.jobID]?.startedAt = existing?.status == .running ? (existing?.startedAt ?? event.timestamp)
+                    : event.timestamp
+            }
         }
         return sortedByTime(Array(recordsByID.values))
     }
@@ -313,6 +325,12 @@ public enum JobFeed {
             guard !trimmed.isEmpty, let data = trimmed.data(using: .utf8) else { return nil }
             return try? decoder.decode(JobEvent.self, from: data)
         }
+    }
+
+    /// An absolute event path that still exists, so a job follows its newest folder rather than a first temp one.
+    static func latestExisting(_ path: String?) -> String? {
+        guard let path, path.hasPrefix("/"), FileManager.default.fileExists(atPath: path) else { return nil }
+        return path
     }
 
     static let taskStages = ["_staging", "backlog", "in-progress", "code-complete", "dev-complete", "done", "failed"]

@@ -62,8 +62,8 @@ public enum MenuFeed {
     static func allItems(jobs: [JobRecord], chats: [Chat], now: Date) -> [Item] {
         let jobItems = jobs.filter { $0.status == .running }.map { job in
             Item(target: .job(job.id), title: job.title,
-                 detail: "\(job.workflow.rawValue) · \(elapsed(now.timeIntervalSince(job.updatedAt)))",
-                 marker: .running, date: job.updatedAt)
+                 detail: "\(job.workflow.rawValue) · Started: \(ShortAge.text(for: job.startedAt ?? job.updatedAt, now: now))",
+                 marker: .running, date: job.startedAt ?? job.updatedAt)
         }
         // Only chats with a reply waiting that hasn't been read; a chat still generating shows up once its reply lands.
         let chatItems = chats.filter(\.unread).map { chat in
@@ -116,5 +116,5 @@ public enum MenuLayout {
         }
     }
 
-    public static let order: [Slot] = [.running, .separator, .models, .refreshStatus, .separator, .open, .settings, .quit]
+    public static let order: [Slot] = [.running, .separator, .models, .separator, .open, .settings, .quit]
 }

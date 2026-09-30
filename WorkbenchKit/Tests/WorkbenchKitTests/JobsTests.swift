@@ -300,3 +300,31 @@ final class FixtureAndDedupeTests: XCTestCase {
         XCTAssertEqual(merged[0].eventCount, 1)
     }
 }
+
+final class RunningDetectionTests: XCTestCase {
+    /// Live bug 2026-09-30: a Helga run's first events pointed at /tmp, later ones at its real task folder. The
+    /// record kept the /tmp path, the temp-dir fixture filter hid it, and the menu showed 1 running job instead of 2.
+    func testRealJobThatOnceUsedATempPathStaysVisibleAndRunning() throws {
+        let real = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".wb-test-\(UUID().uuidString)/review-1")
+        try FileManager.default.createDirectory(at: real, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: real.deletingLastPathComponent()) }
+        func ev(_ status: JobStatus, _ t: Double, _ path: String) -> JobEvent {
+            JobEvent(jobID: "dm:helga:review-1", timestamp: Date(timeIntervalSinceNow: t), project: "dm", workflow: .helga,
+                     status: status, title: "Review", taskPath: path)
+        }
+        let events = [ev(.running, -300, "/tmp/review-1"), ev(.failed, -290, "/tmp/review-1"),
+                      ev(.running, -120, real.path)]
+        let merged = JobFeed.merge(artifacts: [], events: events, projectRoots: [:], runsRoot: "/nonexistent")
+        let cleaned = JobFeed.clean(merged, includeBenchRuns: false, staleAfter: 3600, now: Date())
+        XCTAssertEqual(cleaned.map(\.status), [.running])
+        XCTAssertEqual(cleaned.first?.taskPath, real.path)
+        XCTAssertEqual(cleaned.first?.startedAt, events[2].timestamp, "started = the event that began the current run")
+    }
+
+    func testFixturesStillHidden() {
+        let fixture = JobRecord(id: "x:helga:pass-task", project: "x", workflow: .helga, status: .complete, title: "Fixture pass-task",
+                                model: nil, host: nil, taskPath: "/var/folders/ab/T/tmp.1/pass-task", artifactPath: nil,
+                                summary: "", output: "o", updatedAt: Date(), eventCount: 1)
+        XCTAssertTrue(JobFeed.isBenchRun(fixture))
+    }
+}

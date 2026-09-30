@@ -118,12 +118,51 @@ final class MenuBarManager: NSObject, NSMenuDelegate {
 
     // MARK: - Menu
 
+    // MARK: - Running indicator pulse
+
+    /// Running items in the open menu; their leading ◐ fades in and out while the menu is open.
+    private var runningMenuItems: [NSMenuItem] = []
+    private var menuPulseTimer: Timer?
+    private var menuPulseBright = true
+
+    nonisolated func menuWillOpen(_ menu: NSMenu) {
+        MainActor.assumeIsolated {
+            menuPulseTimer?.invalidate()
+            // A menu tracks events in its own run loop mode, so the timer must run in .common (which includes it).
+            let timer = Timer(timeInterval: 0.6, repeats: true) { _ in
+                Task { @MainActor in MenuBarManager.shared.pulseRunningItems() }
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            menuPulseTimer = timer
+        }
+    }
+
+    nonisolated func menuDidClose(_ menu: NSMenu) {
+        MainActor.assumeIsolated {
+            menuPulseTimer?.invalidate()
+            menuPulseTimer = nil
+            menuPulseBright = true
+        }
+    }
+
+    private func pulseRunningItems() {
+        menuPulseBright.toggle()
+        let color = NSColor.systemOrange.withAlphaComponent(menuPulseBright ? 1 : 0.25)
+        for item in runningMenuItems {
+            guard let current = item.attributedTitle else { continue }
+            let text = NSMutableAttributedString(attributedString: current)
+            text.addAttribute(.foregroundColor, value: color, range: NSRange(location: 0, length: 1))
+            item.attributedTitle = text
+        }
+    }
+
     nonisolated func menuNeedsUpdate(_ menu: NSMenu) {
         MainActor.assumeIsolated { rebuild(menu) }
     }
 
     private func rebuild(_ menu: NSMenu) {
         menu.removeAllItems()
+        runningMenuItems = []
         let hub = WorkbenchHub.shared
 
         for slot in MenuLayout.order {
@@ -199,6 +238,10 @@ final class MenuBarManager: NSObject, NSMenuDelegate {
         if entry.marker == .unread {
             text.append(NSAttributedString(string: "● ", attributes: [.foregroundColor: NSColor.systemBlue,
                                                                         .font: NSFont.menuFont(ofSize: 0)]))
+        } else if entry.marker == .running {
+            text.append(NSAttributedString(string: "◐ ", attributes: [.foregroundColor: NSColor.systemOrange,
+                                                                        .font: NSFont.menuFont(ofSize: 0)]))
+            runningMenuItems.append(menuItem)
         }
         text.append(NSAttributedString(string: title, attributes: [.font: NSFont.menuFont(ofSize: 0)]))
         text.append(NSAttributedString(string: "   " + entry.detail, attributes: [
