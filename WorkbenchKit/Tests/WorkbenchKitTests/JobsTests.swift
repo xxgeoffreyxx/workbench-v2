@@ -46,6 +46,95 @@ final class JobsTests: XCTestCase {
         XCTAssertEqual(records[0].summary, "ok")
     }
 
+    func testSortIsStrictlyNewestFirstThenTitle() {
+        func r(_ id: String, _ project: String, _ wf: JobWorkflow, _ status: JobStatus, _ t: Double) -> JobRecord {
+            JobRecord(id: id, project: project, workflow: wf, status: status, title: id, model: nil, host: nil, taskPath: nil,
+                      artifactPath: nil, summary: "", output: "", updatedAt: Date(timeIntervalSince1970: t), eventCount: 0)
+        }
+        let records = [r("old-scout-running", "Scout", .background, .running, 10), r("b-tie", "RL", .peer, .complete, 50),
+                       r("a-tie", "ThriveOS", .helga, .complete, 50), r("newest-other", "Zeta", .peer, .failed, 100)]
+        XCTAssertEqual(JobFeed.sortedByTime(records).map(\.id), ["newest-other", "a-tie", "b-tie", "old-scout-running"])
+    }
+
+    func testHosakaRunRecordsFromRunsRoot() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let run = root.appendingPathComponent("scout/adhoc-1")
+        let evidence = run.appendingPathComponent("evidence")
+        try FileManager.default.createDirectory(at: evidence.appendingPathComponent("helga-diagnostics"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try "# Requirements Contract: Fix the feed\n\nBody".write(to: run.appendingPathComponent("requirements.md"), atomically: true, encoding: .utf8)
+        try #"{"verdict":"REJECT","reason":"loops","turns":40,"total_tokens":426927,"elapsed_seconds":228.0,"timestamp":"2026-09-30T02:24:24Z"}"#
+            .write(to: evidence.appendingPathComponent("helga-verdict.json"), atomically: true, encoding: .utf8)
+        let log = String(repeating: "early noise\n", count: 3000) + "FINAL LINE OF LOG"
+        try log.write(to: evidence.appendingPathComponent("helga-run.log"), atomically: true, encoding: .utf8)
+        let turns = [
+            #"{"turn":0,"prompt_tokens":4000,"completion_tokens":90,"response":"I will look around first."}"#,
+            #"{"turn":1,"prompt_tokens":4621,"completion_tokens":41,"response":"```\n{\"action\":\"execute\",\"command\":\"cat a.js\"}\n```"}"#,
+        ].joined(separator: "\n")
+        try turns.write(to: evidence.appendingPathComponent("helga-diagnostics/model-turns.jsonl"), atomically: true, encoding: .utf8)
+        try #"{"verdict":"clean","agents_dispatched":3,"timestamp":"2026-09-30T03:00:00Z"}"#
+            .write(to: evidence.appendingPathComponent("code-review-result.json"), atomically: true, encoding: .utf8)
+
+        let records = JobFeed.hosakaRunRecords(runsRoot: root.path)
+        let helga = try XCTUnwrap(records.first { $0.workflow == .helga })
+        let peer = try XCTUnwrap(records.first { $0.workflow == .peer })
+        XCTAssertEqual(helga.id, "Scout:helga:adhoc-1")
+        XCTAssertEqual(helga.title, "Scout: Requirements Contract: Fix the feed")
+        XCTAssertEqual(helga.status, .failed)
+        XCTAssertEqual(helga.updatedAt, ISO8601DateFormatter().date(from: "2026-09-30T02:24:24Z"))
+        XCTAssertTrue(helga.summary.contains("loops"))
+        XCTAssertTrue(helga.summary.contains("40 turns"))
+        XCTAssertTrue(helga.summary.contains("426927 tokens"))
+        XCTAssertTrue(helga.summary.contains("228s"))
+        XCTAssertTrue(helga.output.contains("\"verdict\":\"REJECT\""))
+        XCTAssertTrue(helga.output.contains("FINAL LINE OF LOG"), "log tail must be kept, not the head")
+        XCTAssertTrue(helga.output.contains("turn 1 · prompt 4621 · completion 41 · execute: cat a.js"))
+        XCTAssertTrue(helga.output.contains("turn 0 · prompt 4000 · completion 90 · I will look around first."))
+        XCTAssertEqual(peer.id, "Scout:peer:adhoc-1")
+        XCTAssertEqual(peer.updatedAt, ISO8601DateFormatter().date(from: "2026-09-30T03:00:00Z"))
+    }
+
+    func testHelgaTimestampFallsBackToEventsThenMtime() throws {
+        let run = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: run.appendingPathComponent("evidence"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: run) }
+        let json = run.appendingPathComponent("evidence/helga-verdict.json")
+        try #"{"verdict":"PASS"}"#.write(to: json, atomically: true, encoding: .utf8)
+        try [#"{"ts":"2026-09-29T01:00:00Z","event":"approved"}"#,
+             #"{"ts":"2026-09-29T02:00:00Z","event":"reviewer_waived","reviewer":"qa_helga"}"#,
+             #"{"ts":"2026-09-29T03:00:00Z","event":"deploy"}"#].joined(separator: "\n")
+            .write(to: run.appendingPathComponent("events.ndjson"), atomically: true, encoding: .utf8)
+        let record = JobFeed.helgaRecord(project: "Scout", taskName: "r", title: "t", taskURL: run, jsonURL: json,
+                                         logURL: run.appendingPathComponent("evidence/helga-run.log"))
+        XCTAssertEqual(record.updatedAt, ISO8601DateFormatter().date(from: "2026-09-29T02:00:00Z"))
+        try FileManager.default.removeItem(at: run.appendingPathComponent("events.ndjson"))
+        let fallback = JobFeed.helgaRecord(project: "Scout", taskName: "r", title: "t", taskURL: run, jsonURL: json,
+                                           logURL: run.appendingPathComponent("evidence/helga-run.log"))
+        XCTAssertEqual(fallback.updatedAt, JobFeed.modificationDate([json, run]))
+    }
+
+    func testEventsDoNotOverwriteEvidenceTitleSummaryOrOutput() {
+        let evidenceTime = Date(timeIntervalSince1970: 1_000)
+        let artifact = JobRecord(id: "Scout:helga:run-1", project: "Scout", workflow: .helga, status: .complete,
+                                 title: "Scout: Requirements Contract: Fix the feed", model: nil, host: nil, taskPath: "/x",
+                                 artifactPath: "/x/evidence/helga-verdict.json", summary: "ok · 40 turns",
+                                 output: "rich output", updatedAt: evidenceTime, eventCount: 0)
+        func event(_ status: JobStatus, _ t: Double, _ summary: String) -> JobEvent {
+            JobEvent(jobID: "Scout:helga:run-1", timestamp: Date(timeIntervalSince1970: t), project: "Scout",
+                     workflow: .helga, status: status, title: "Requirements Contract", summary: summary)
+        }
+        let finished = JobFeed.merge(artifacts: [artifact], events: [event(.running, 900, "started"), event(.complete, 1_000, "Helga verdict: PASS")])
+        XCTAssertEqual(finished.count, 1)
+        XCTAssertEqual(finished[0].title, "Scout: Requirements Contract: Fix the feed")
+        XCTAssertEqual(finished[0].summary, "ok · 40 turns")
+        XCTAssertEqual(finished[0].output, "rich output")
+        XCTAssertEqual(finished[0].status, .complete)
+        let rerun = JobFeed.merge(artifacts: [artifact], events: [event(.running, 2_000, "Helga investigation started")])
+        XCTAssertEqual(rerun[0].status, .running)
+        XCTAssertEqual(rerun[0].summary, "Helga investigation started")
+        XCTAssertEqual(rerun[0].title, "Scout: Requirements Contract: Fix the feed")
+    }
+
     func testCommandArgumentParsing() {
         let cmd = "node agentic-coding-bench.mjs --out /tmp/run --models=a,b"
         XCTAssertEqual(JobFeed.commandArgument(after: "--out", in: cmd), "/tmp/run")
@@ -89,5 +178,99 @@ final class JobFeedCleaningTests: XCTestCase {
         let preview = try XCTUnwrap(JobFeed.folderPreview(path: dir.path))
         XCTAssertTrue(preview.contains("helga.log"))
         XCTAssertTrue(preview.contains("final verdict: clean"))
+    }
+}
+
+final class ShortAgeTests: XCTestCase {
+    private let now = ISO8601DateFormatter().date(from: "2026-09-30T12:00:00Z")!
+    private var utc: Calendar { var c = Calendar(identifier: .gregorian); c.timeZone = TimeZone(identifier: "UTC")!; return c }
+    private func age(_ seconds: TimeInterval) -> String {
+        ShortAge.text(for: now.addingTimeInterval(-seconds), now: now, calendar: utc, locale: Locale(identifier: "en_US"))
+    }
+
+    func testBoundaries() {
+        XCTAssertEqual(age(0), "now")
+        XCTAssertEqual(age(59), "now")
+        XCTAssertEqual(age(-30), "now", "future times read as now")
+        XCTAssertEqual(age(60), "1m ago")
+        XCTAssertEqual(age(5 * 60), "5m ago")
+        XCTAssertEqual(age(3599), "59m ago")
+        XCTAssertEqual(age(3600), "1h ago")
+        XCTAssertEqual(age(5 * 3600), "5h ago")
+        XCTAssertEqual(age(86_399), "23h ago")
+        XCTAssertEqual(age(86_400), "1d ago")
+        XCTAssertEqual(age(3 * 86_400), "3d ago")
+        XCTAssertEqual(age(7 * 86_400 - 1), "6d ago")
+        XCTAssertEqual(age(7 * 86_400), "Sep 23")
+        XCTAssertEqual(age(300 * 86_400), "Dec 4, 2025")
+    }
+}
+
+final class JobEventResolutionTests: XCTestCase {
+    private var root: URL!
+    private var runs: URL!
+
+    override func setUpWithError() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        root = base.appendingPathComponent("scout")
+        runs = base.appendingPathComponent("runs")
+        try FileManager.default.createDirectory(at: runs, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: root.deletingLastPathComponent())
+    }
+
+    private func makeTask(_ relative: String, under base: URL, verdict: String = "PASS") throws {
+        let evidence = base.appendingPathComponent(relative).appendingPathComponent("evidence")
+        try FileManager.default.createDirectory(at: evidence, withIntermediateDirectories: true)
+        try "title: Real task title\n".write(to: evidence.deletingLastPathComponent().appendingPathComponent("task.yaml"), atomically: true, encoding: .utf8)
+        try #"{"verdict":"\#(verdict)","reason":"from disk","turns":7}"#.write(to: evidence.appendingPathComponent("helga-verdict.json"), atomically: true, encoding: .utf8)
+        try "log body\nLAST LOG LINE".write(to: evidence.appendingPathComponent("helga-run.log"), atomically: true, encoding: .utf8)
+    }
+
+    private func event(task: String?, artifact: String? = nil, summary: String = "Helga verdict: PASS") -> JobEvent {
+        JobEvent(jobID: "Scout:helga:803b", timestamp: Date(timeIntervalSince1970: 5), project: "Scout", workflow: .helga,
+                 status: .complete, title: "Requirements Contract", taskPath: task, artifactPath: artifact, summary: summary)
+    }
+
+    private func merged(_ e: JobEvent) -> JobRecord {
+        JobFeed.merge(artifacts: [], events: [e], projectRoots: ["scout": root], runsRoot: runs.path)[0]
+    }
+
+    func testRelativeEventPathResolvesAgainstProjectRoot() throws {
+        try makeTask("tasks/code-complete/803b", under: root)
+        let record = merged(event(task: "tasks/code-complete/803b", artifact: "tasks/code-complete/803b/evidence/helga-verdict.json"))
+        XCTAssertTrue(record.output.contains("LAST LOG LINE"))
+        XCTAssertEqual(record.title, "Real task title")
+        XCTAssertTrue(record.summary.contains("from disk"))
+    }
+
+    func testStaleStagePathFindsTaskInItsCurrentStage() throws {
+        try makeTask("tasks/done/803b", under: root)
+        let record = merged(event(task: "tasks/code-complete/803b"))
+        XCTAssertEqual(record.taskPath, root.appendingPathComponent("tasks/done/803b").path)
+        XCTAssertTrue(record.output.contains("LAST LOG LINE"))
+    }
+
+    func testAdhocRunFoundUnderRunsRoot() throws {
+        try makeTask("scout/803b", under: runs)
+        let record = merged(event(task: "/gone/elsewhere/803b"))
+        XCTAssertTrue(record.output.contains("LAST LOG LINE"))
+    }
+
+    func testScannedOutputWinsOverEmptyEventOutput() throws {
+        let scanned = JobRecord(id: "Scout:helga:803b", project: "Scout", workflow: .helga, status: .complete, title: "t",
+                                model: nil, host: nil, taskPath: nil, artifactPath: nil, summary: "s", output: "scanned output",
+                                updatedAt: Date(timeIntervalSince1970: 5), eventCount: 0)
+        let record = JobFeed.merge(artifacts: [scanned], events: [event(task: nil)], projectRoots: ["scout": root], runsRoot: runs.path)[0]
+        XCTAssertEqual(record.output, "scanned output")
+    }
+
+    func testMissingEvidenceStillShowsEventDetails() {
+        let record = merged(event(task: "tasks/code-complete/nowhere", summary: "Helga verdict: REJECT"))
+        XCTAssertFalse(record.output.isEmpty)
+        XCTAssertTrue(record.output.contains("Helga verdict: REJECT"))
+        XCTAssertTrue(record.output.contains("tasks/code-complete/nowhere"))
     }
 }

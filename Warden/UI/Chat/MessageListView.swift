@@ -77,6 +77,8 @@ struct MessageListView: View {
     @State private var pendingCodeBlocks: Int = 0
     @State private var codeBlocksRendered: Bool = false
     @State private var scrollDebounceWorkItem: DispatchWorkItem?
+    /// scrollTo traps if a deferred scroll runs after this list has left the screen, so deferred scrolls check this.
+    @State private var isOnScreen = false
     
     init(
         chat: ChatEntity,
@@ -239,6 +241,7 @@ struct MessageListView: View {
                 .frame(height: 24)
         }
         .onAppear {
+            isOnScreen = true
             // Optimize: Only check the last message for pending code blocks since that's what affects scroll-to-bottom
             if let lastMessage = sortedMessages.last {
                 pendingCodeBlocks = (lastMessage.body.components(separatedBy: "```").count - 1) / 2
@@ -249,12 +252,17 @@ struct MessageListView: View {
                 codeBlocksRendered = true
             }
         }
+        .onDisappear {
+            isOnScreen = false
+            scrollDebounceWorkItem?.cancel()
+            scrollDebounceWorkItem = nil
+        }
         .onReceive(NotificationCenter.default.publisher(for: .codeBlockRendered)) { _ in
             guard pendingCodeBlocks > 0 else { return }
             pendingCodeBlocks -= 1
             if pendingCodeBlocks == 0 {
                 codeBlocksRendered = true
-                if let lastMessage = sortedMessages.last {
+                if isOnScreen, let lastMessage = sortedMessages.last {
                     scrollView.scrollTo(lastMessage.id, anchor: .bottom)
                 }
             }
@@ -271,6 +279,7 @@ struct MessageListView: View {
 
             scrollDebounceWorkItem?.cancel()
             let workItem = DispatchWorkItem {
+                guard isOnScreen else { return }
                 if let lastMessage = sortedMessages.last {
                     withAnimation(.easeOut(duration: 0.25)) {
                         scrollView.scrollTo(lastMessage.id, anchor: .bottom)
@@ -284,6 +293,7 @@ struct MessageListView: View {
             guard isStreaming, !userIsScrolling, !streamingAssistantText.isEmpty else { return }
             scrollDebounceWorkItem?.cancel()
             let workItem = DispatchWorkItem {
+                guard isOnScreen else { return }
                 withAnimation(.easeOut(duration: 0.25)) {
                     scrollView.scrollTo("streaming_message", anchor: .bottom)
                 }

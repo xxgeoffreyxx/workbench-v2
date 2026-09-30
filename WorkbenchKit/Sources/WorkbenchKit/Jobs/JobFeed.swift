@@ -229,58 +229,56 @@ public enum JobFeed {
     }
 
     static func loadJobRecords() -> [JobRecord] {
+        merge(artifacts: artifactJobRecords(), events: jobEvents())
+    }
+
+    /// Overlays jobs.jsonl events on the records read from disk. When a job has evidence on disk, its title, summary
+    /// and output come from that evidence (events carry only a short title like "Requirements Contract" and a one-line
+    /// verdict); the event decides the status only while it is newer than the evidence, e.g. a re-run in progress.
+    static func merge(artifacts: [JobRecord], events: [JobEvent], projectRoots: [String: URL]? = nil,
+                      runsRoot: String? = nil) -> [JobRecord] {
         var recordsByID: [String: JobRecord] = [:]
-        for record in artifactJobRecords() {
+        var artifactsByID: [String: JobRecord] = [:]
+        for record in artifacts {
             recordsByID[record.id] = record
+            artifactsByID[record.id] = record
         }
-        for event in jobEvents() {
+        for event in events {
             let existing = recordsByID[event.jobID]
-            let eventOutput = event.output ?? eventArtifactOutput(for: event)
+            if artifactsByID[event.jobID] == nil, event.workflow != .background,
+               let found = evidenceRecord(for: event, projectRoots: projectRoots, runsRoot: runsRoot ?? hosakaRunsRoot) {
+                // The event's stored path was relative or stale (the task moved stage); read the evidence where it is now.
+                artifactsByID[event.jobID] = found
+            }
+            let artifact = artifactsByID[event.jobID]
+            let eventOutput = artifact == nil ? (event.output ?? eventArtifactOutput(for: event)) : nil
+            let eventIsNewer = artifact.map { event.timestamp > $0.updatedAt } ?? true
             recordsByID[event.jobID] = JobRecord(
                 id: event.jobID,
                 project: event.project,
                 workflow: event.workflow,
-                status: event.status,
-                title: event.title,
+                status: eventIsNewer ? event.status : (artifact?.status ?? event.status),
+                title: artifact?.title ?? event.title,
                 model: event.model ?? existing?.model,
                 host: event.host ?? existing?.host,
-                taskPath: event.taskPath ?? existing?.taskPath,
-                artifactPath: event.artifactPath ?? existing?.artifactPath,
-                summary: event.summary ?? existing?.summary ?? event.status.rawValue,
-                output: eventOutput ?? existing?.output ?? "",
+                taskPath: artifact?.taskPath ?? event.taskPath ?? existing?.taskPath,
+                artifactPath: artifact?.artifactPath ?? event.artifactPath ?? existing?.artifactPath,
+                summary: artifact.flatMap { eventIsNewer && event.status == .running ? nil : $0.summary }
+                    ?? event.summary ?? existing?.summary ?? event.status.rawValue,
+                output: artifact?.output ?? eventOutput ?? existing.flatMap { $0.output.isEmpty ? nil : $0.output }
+                    ?? eventFallbackOutput(event),
                 updatedAt: max(event.timestamp, existing?.updatedAt ?? .distantPast),
                 eventCount: (existing?.eventCount ?? 0) + 1
             )
         }
-        return recordsByID.values.sorted {
-            let lhsRunning = $0.status == .running
-            let rhsRunning = $1.status == .running
-            if lhsRunning != rhsRunning { return lhsRunning && !rhsRunning }
-            let lhsProject = projectSortRank($0.project)
-            let rhsProject = projectSortRank($1.project)
-            if lhsProject != rhsProject { return lhsProject < rhsProject }
-            let lhsWorkflow = workflowSortRank($0.workflow)
-            let rhsWorkflow = workflowSortRank($1.workflow)
-            if lhsWorkflow != rhsWorkflow { return lhsWorkflow < rhsWorkflow }
+        return sortedByTime(Array(recordsByID.values))
+    }
+
+    /// Newest first, strictly by time; ties broken by title. No project or workflow ranking.
+    public static func sortedByTime(_ records: [JobRecord]) -> [JobRecord] {
+        records.sorted {
             if $0.updatedAt != $1.updatedAt { return $0.updatedAt > $1.updatedAt }
             return $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
-        }
-    }
-
-    static func projectSortRank(_ project: String) -> Int {
-        switch project.lowercased() {
-        case "scout": return 0
-        case "thriveos": return 1
-        case "rl": return 2
-        default: return 10
-        }
-    }
-
-    static func workflowSortRank(_ workflow: JobWorkflow) -> Int {
-        switch workflow {
-        case .background: return 0
-        case .helga: return 1
-        case .peer: return 2
         }
     }
 
@@ -296,6 +294,76 @@ public enum JobFeed {
             guard !trimmed.isEmpty, let data = trimmed.data(using: .utf8) else { return nil }
             return try? decoder.decode(JobEvent.self, from: data)
         }
+    }
+
+    static let taskStages = ["_staging", "backlog", "in-progress", "code-complete", "dev-complete", "done", "failed"]
+
+    /// Where an event's task lives now. Stored paths may be relative to the project ("tasks/code-complete/803b") or
+    /// stale because the task moved stage, so this tries the path as given, then the same task id under every
+    /// tasks/<stage>/ folder, then under the Hosaka runs folder for ad-hoc runs.
+    static func resolveTaskURL(taskPath: String?, artifactPath: String?, project: String,
+                               projectRoots: [String: URL]?, runsRoot: String) -> URL? {
+        let fm = FileManager.default
+        let root = projectRoots.map { $0[project.lowercased()] } ?? projectRoot(for: project)
+        var taskID: String?
+        if let taskPath {
+            let direct = taskPath.hasPrefix("/") ? URL(fileURLWithPath: taskPath) : root?.appendingPathComponent(taskPath)
+            if let direct, fm.fileExists(atPath: direct.path) { return direct }
+            taskID = URL(fileURLWithPath: taskPath).lastPathComponent
+        } else if let artifactPath {
+            // ".../tasks/<stage>/<id>/evidence/x.json" or ".../<run-id>/evidence/x.json": the id is above evidence/.
+            let parts = URL(fileURLWithPath: artifactPath).pathComponents
+            if let index = parts.lastIndex(of: "evidence"), index > 0 { taskID = parts[index - 1] }
+        }
+        guard let taskID, !taskID.isEmpty, taskID != "/" else { return nil }
+        var candidates: [URL] = []
+        if let root { candidates += taskStages.map { root.appendingPathComponent("tasks/\($0)/\(taskID)") } }
+        let runs = URL(fileURLWithPath: runsRoot)
+        candidates.append(runs.appendingPathComponent("\(project.lowercased())/\(taskID)"))
+        if let projects = try? fm.contentsOfDirectory(atPath: runsRoot) {
+            candidates += projects.map { runs.appendingPathComponent("\($0)/\(taskID)") }
+        }
+        return candidates.first { fm.fileExists(atPath: $0.path) }
+    }
+
+    /// A Helga or Peer record read from the evidence of the task an event points at, wherever that task is now.
+    static func evidenceRecord(for event: JobEvent, projectRoots: [String: URL]?, runsRoot: String) -> JobRecord? {
+        guard let taskURL = resolveTaskURL(taskPath: event.taskPath, artifactPath: event.artifactPath, project: event.project,
+                                           projectRoots: projectRoots, runsRoot: runsRoot) else { return nil }
+        let fm = FileManager.default
+        let evidence = taskURL.appendingPathComponent("evidence", isDirectory: true)
+        let title = taskTitle(taskURL: taskURL) ?? event.title
+        var record: JobRecord?
+        switch event.workflow {
+        case .helga:
+            let json = evidence.appendingPathComponent("helga-verdict.json")
+            let log = evidence.appendingPathComponent("helga-run.log")
+            guard fm.fileExists(atPath: json.path) || fm.fileExists(atPath: log.path) else { return nil }
+            record = helgaRecord(project: event.project, taskName: taskURL.lastPathComponent, title: title, taskURL: taskURL,
+                                 jsonURL: json, logURL: log)
+        case .peer:
+            let json = evidence.appendingPathComponent("code-review-result.json")
+            let summary = evidence.appendingPathComponent("review-summary.md")
+            guard fm.fileExists(atPath: json.path) || fm.fileExists(atPath: summary.path) else { return nil }
+            record = reviewRecord(project: event.project, taskName: taskURL.lastPathComponent, title: title, taskURL: taskURL,
+                                  jsonURL: json, summaryURL: summary)
+        case .background:
+            return nil
+        }
+        record?.id = event.jobID
+        return record
+    }
+
+    /// What to show when a job's evidence can't be found anywhere: everything the event itself recorded.
+    static func eventFallbackOutput(_ event: JobEvent) -> String {
+        [
+            "No evidence found on disk for this job; showing what its last event recorded.",
+            "Status: \(event.status.rawValue)",
+            event.summary.map { "Summary: \($0)" },
+            event.model.map { "Model: \($0)" },
+            event.taskPath.map { "Task path: \($0)" },
+            event.artifactPath.map { "Artifact: \($0)" },
+        ].compactMap { $0 }.joined(separator: "\n")
     }
 
     static func eventArtifactOutput(for event: JobEvent) -> String? {
@@ -342,6 +410,7 @@ public enum JobFeed {
         var records: [JobRecord] = []
         records.append(contentsOf: hosakaArtifactRecords(project: "Scout", root: "/Users/geoffmccaleb/scout"))
         records.append(contentsOf: hosakaArtifactRecords(project: "ThriveOS", root: "/Users/geoffmccaleb/ThriveOS"))
+        records.append(contentsOf: hosakaRunRecords(runsRoot: hosakaRunsRoot))
         records.append(contentsOf: rlArtifactRecords(root: "/Users/geoffmccaleb/RL"))
         records.append(contentsOf: activeProcessJobRecords())
         return records
@@ -481,7 +550,7 @@ public enum JobFeed {
                 options: [.skipsHiddenFiles]
             ) else { continue }
 
-            for taskURL in taskURLs.prefix(240) {
+            for taskURL in taskURLs {
                 guard ((try? taskURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false) else { continue }
                 let taskName = taskURL.lastPathComponent
                 let title = taskTitle(taskURL: taskURL) ?? taskName
@@ -500,6 +569,107 @@ public enum JobFeed {
             }
         }
         return records
+    }
+
+    static var hosakaRunsRoot: String {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".hosaka/runs").path
+    }
+
+    /// Hosaka vNext run records: <runsRoot>/<project>/<run-id>/ with evidence/, requirements.md and events.ndjson.
+    static func hosakaRunRecords(runsRoot: String) -> [JobRecord] {
+        let fm = FileManager.default
+        let rootURL = URL(fileURLWithPath: runsRoot, isDirectory: true)
+        guard let projectURLs = try? fm.contentsOfDirectory(at: rootURL, includingPropertiesForKeys: [.isDirectoryKey],
+                                                            options: [.skipsHiddenFiles]) else { return [] }
+        var records: [JobRecord] = []
+        for projectURL in projectURLs where isDirectory(projectURL) {
+            let dirName = projectURL.lastPathComponent
+            let project = dirName.prefix(1).uppercased() + dirName.dropFirst()
+            guard let runURLs = try? fm.contentsOfDirectory(at: projectURL, includingPropertiesForKeys: [.isDirectoryKey],
+                                                            options: [.skipsHiddenFiles]) else { continue }
+            for runURL in runURLs where isDirectory(runURL) {
+                let runID = runURL.lastPathComponent
+                let requirements = try? String(contentsOf: runURL.appendingPathComponent("requirements.md"), encoding: .utf8)
+                let heading = requirements.flatMap(markdownTitle) ?? runID
+                let title = "\(project): \(heading)"
+                let evidenceURL = runURL.appendingPathComponent("evidence", isDirectory: true)
+                let reviewJSON = evidenceURL.appendingPathComponent("code-review-result.json")
+                let reviewSummary = evidenceURL.appendingPathComponent("review-summary.md")
+                if fm.fileExists(atPath: reviewJSON.path) || fm.fileExists(atPath: reviewSummary.path) {
+                    records.append(reviewRecord(project: project, taskName: runID, title: title, taskURL: runURL,
+                                                jsonURL: reviewJSON, summaryURL: reviewSummary))
+                }
+                let helgaJSON = evidenceURL.appendingPathComponent("helga-verdict.json")
+                let helgaLog = evidenceURL.appendingPathComponent("helga-run.log")
+                if fm.fileExists(atPath: helgaJSON.path) || fm.fileExists(atPath: helgaLog.path) {
+                    records.append(helgaRecord(project: project, taskName: runID, title: title, taskURL: runURL,
+                                               jsonURL: helgaJSON, logURL: helgaLog))
+                }
+            }
+        }
+        return records
+    }
+
+    static func isDirectory(_ url: URL) -> Bool {
+        (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+    }
+
+    static func isoDate(_ value: Any?) -> Date? {
+        guard let text = value as? String else { return nil }
+        if let date = ISO8601DateFormatter().date(from: text) { return date }
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fractional.date(from: text)
+    }
+
+    /// When the review really ran: a timestamp in the JSON, else the last matching event in events.ndjson, else mtime.
+    static func runTimestamp(json: [String: Any]?, taskURL: URL, eventMatch: String, fallback: [URL]) -> Date {
+        for key in ["timestamp", "ts", "completed_at", "finished_at", "generated_at"] {
+            if let date = isoDate(json?[key]) { return date }
+        }
+        if let text = try? String(contentsOf: taskURL.appendingPathComponent("events.ndjson"), encoding: .utf8) {
+            let hit = text.components(separatedBy: .newlines).last { $0.localizedCaseInsensitiveContains(eventMatch) }
+            if let line = hit, let data = line.data(using: .utf8),
+               let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let date = isoDate(event["ts"] ?? event["timestamp"]) {
+                return date
+            }
+        }
+        return modificationDate(fallback)
+    }
+
+    /// model-turns.jsonl as one line per turn, so a looping investigation is visible at a glance.
+    static func modelTurnsSummary(_ url: URL) -> String? {
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        let lines: [String] = text.components(separatedBy: .newlines).compactMap { line in
+            guard let data = line.data(using: .utf8),
+                  let turn = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+            let number = (turn["turn"] as? Int).map(String.init) ?? "?"
+            let prompt = (turn["prompt_tokens"] as? Int).map(String.init) ?? "?"
+            let completion = (turn["completion_tokens"] as? Int).map(String.init) ?? "?"
+            let action = turnAction(turn["response"] as? String ?? "")
+            return "turn \(number) · prompt \(prompt) · completion \(completion) · \(action)"
+        }
+        return lines.isEmpty ? nil : lines.joined(separator: "\n")
+    }
+
+    static func turnAction(_ response: String) -> String {
+        if let start = response.firstIndex(of: "{"), let end = response.lastIndex(of: "}"), start < end,
+           let data = String(response[start...end]).data(using: .utf8),
+           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let action = object["action"] as? String {
+            let detail = (object["command"] ?? object["path"] ?? object["verdict"] ?? object["query"]) as? String
+            return oneLine(detail.map { "\(action): \($0)" } ?? action, max: 140)
+        }
+        let first = response.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .first { !$0.isEmpty && !$0.hasPrefix("```") } ?? "(empty)"
+        return oneLine(first, max: 140)
+    }
+
+    static func oneLine(_ text: String, max: Int) -> String {
+        let flat = text.replacingOccurrences(of: "\n", with: " ")
+        return flat.count > max ? String(flat.prefix(max)) + "…" : flat
     }
 
     static func reviewRecord(project: String, taskName: String, title: String, taskURL: URL, jsonURL: URL, summaryURL: URL) -> JobRecord {
@@ -528,7 +698,7 @@ public enum JobFeed {
             artifactPath: FileManager.default.fileExists(atPath: jsonURL.path) ? jsonURL.path : summaryURL.path,
             summary: summary.isEmpty ? "Peer review evidence" : summary,
             output: output,
-            updatedAt: modificationDate([jsonURL, summaryURL, taskURL]),
+            updatedAt: runTimestamp(json: json, taskURL: taskURL, eventMatch: "review", fallback: [jsonURL, summaryURL, taskURL]),
             eventCount: 0
         )
     }
@@ -545,9 +715,22 @@ public enum JobFeed {
         }
         let reason = json?["reason"] as? String
         let model = json?["model"] as? String
+        let turns = json?["turns"] as? Int
+        let tokens = json?["total_tokens"] as? Int
+        let elapsed = (json?["elapsed_seconds"] as? NSNumber)?.doubleValue
+        let summaryParts = [
+            reason ?? verdict.map { "Verdict \($0)" } ?? "Helga evidence",
+            turns.map { "\($0) turns" },
+            tokens.map { "\($0) tokens" },
+            elapsed.map { "\(Int($0.rounded()))s" },
+        ].compactMap { $0 }
+        let turnsURL = jsonURL.deletingLastPathComponent().appendingPathComponent("helga-diagnostics/model-turns.jsonl")
+        let turnList = modelTurnsSummary(turnsURL)
+        let logTail = readTailText(logURL, limit: 12_000)
         let output = [
             readText(jsonURL, limit: 12_000),
-            readText(logURL, limit: 12_000),
+            turnList.map { "Model turns:\n\($0)" } ?? "",
+            logTail.isEmpty ? "" : "Tail of helga-run.log:\n\(logTail)",
         ].filter { !$0.isEmpty }.joined(separator: "\n\n")
         return JobRecord(
             id: "\(project):helga:\(taskName)",
@@ -559,9 +742,9 @@ public enum JobFeed {
             host: nil,
             taskPath: taskURL.path,
             artifactPath: FileManager.default.fileExists(atPath: jsonURL.path) ? jsonURL.path : logURL.path,
-            summary: reason ?? verdict.map { "Verdict \($0)" } ?? "Helga evidence",
+            summary: summaryParts.joined(separator: " · "),
             output: output,
-            updatedAt: modificationDate([jsonURL, logURL, taskURL]),
+            updatedAt: runTimestamp(json: json, taskURL: taskURL, eventMatch: "helga", fallback: [jsonURL, logURL, taskURL]),
             eventCount: 0
         )
     }
