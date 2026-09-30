@@ -126,13 +126,22 @@ final class MenuBarManager: NSObject, NSMenuDelegate {
         menu.removeAllItems()
         let hub = WorkbenchHub.shared
 
-        addRunningItems(to: menu, hub: hub)
-        menu.addItem(.separator())
-        menu.addItem(item("Open Workbench", #selector(openMainWindow), key: "o"))
-        menu.addItem(item("New Chat", #selector(newChat), key: "n"))
-        menu.addItem(item("Quick Chat", #selector(openQuickChat)))
+        for slot in MenuLayout.order {
+            switch slot {
+            case .running: addRunningItems(to: menu, hub: hub)
+            case .separator: menu.addItem(.separator())
+            case .models: addModels(to: menu, hub: hub)
+            case .refreshStatus: menu.addItem(item(slot.title, #selector(refreshStatus)))
+            case .open: menu.addItem(item(slot.title, #selector(openMainWindow), key: slot.key))
+            case .settings: menu.addItem(item(slot.title, #selector(openSettings), key: slot.key))
+            case .quit: menu.addItem(item(slot.title, #selector(quitApp), key: slot.key))
+            case .newChat: menu.addItem(item(slot.title, #selector(newChat), key: "n"))
+            case .quickChat: menu.addItem(item(slot.title, #selector(openQuickChat)))
+            }
+        }
+    }
 
-        menu.addItem(.separator())
+    private func addModels(to menu: NSMenu, hub: WorkbenchHub) {
         menu.addItem(header("Models"))
         switch hub.routerOnline {
         case .none:
@@ -153,11 +162,6 @@ final class MenuBarManager: NSObject, NSMenuDelegate {
                 }
             }
         }
-        menu.addItem(item("Refresh Status", #selector(refreshStatus)))
-
-        menu.addItem(.separator())
-        menu.addItem(item("Settings…", #selector(openSettings), key: ","))
-        menu.addItem(item("Quit Workbench", #selector(quitApp), key: "q"))
     }
 
     /// Replaces the old "N jobs running" line: what is running right now, and chats with a reply not yet read.

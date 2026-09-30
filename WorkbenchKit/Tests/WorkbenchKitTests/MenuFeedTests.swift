@@ -66,3 +66,16 @@ final class MenuFeedTests: XCTestCase {
         XCTAssertFalse(MenuFeed.isUnread(lastReplyAt: Date(timeIntervalSince1970: 1), lastViewedAt: nil))
     }
 }
+
+final class MenuLayoutTests: XCTestCase {
+    func testMenuOrder() {
+        XCTAssertEqual(MenuLayout.order, [.running, .separator, .models, .refreshStatus, .separator, .open, .settings, .quit])
+        XCTAssertFalse(MenuLayout.order.contains(.newChat))
+        XCTAssertFalse(MenuLayout.order.contains(.quickChat))
+    }
+
+    func testOpenIsTitledOpenWithCommandO() {
+        XCTAssertEqual(MenuLayout.Slot.open.title, "Open")
+        XCTAssertEqual(MenuLayout.Slot.open.key, "o")
+    }
+}

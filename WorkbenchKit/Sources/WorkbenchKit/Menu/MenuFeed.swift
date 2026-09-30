@@ -88,3 +88,33 @@ public enum MenuFeed {
         return "\(s / 86_400)d"
     }
 }
+
+/// Order of the menu bar menu: what's running, the models, then Open / Settings / Quit at the bottom.
+public enum MenuLayout {
+    public enum Slot: Hashable, Sendable {
+        case running, separator, models, refreshStatus, open, settings, quit, newChat, quickChat
+
+        public var title: String {
+            switch self {
+            case .open: return "Open"
+            case .settings: return "Settings…"
+            case .quit: return "Quit Workbench"
+            case .refreshStatus: return "Refresh Status"
+            case .newChat: return "New Chat"
+            case .quickChat: return "Quick Chat"
+            case .running, .separator, .models: return ""
+            }
+        }
+
+        public var key: String {
+            switch self {
+            case .open: return "o"
+            case .settings: return ","
+            case .quit: return "q"
+            default: return ""
+            }
+        }
+    }
+
+    public static let order: [Slot] = [.running, .separator, .models, .refreshStatus, .separator, .open, .settings, .quit]
+}
