@@ -274,3 +274,29 @@ final class JobEventResolutionTests: XCTestCase {
         XCTAssertTrue(record.output.contains("tasks/code-complete/nowhere"))
     }
 }
+
+final class FixtureAndDedupeTests: XCTestCase {
+    private func rec(_ id: String, task: String?) -> JobRecord {
+        JobRecord(id: id, project: "Scout", workflow: .helga, status: .complete, title: id, model: nil, host: nil, taskPath: task,
+                  artifactPath: nil, summary: "", output: "x", updatedAt: Date(), eventCount: 0)
+    }
+
+    func testTempDirFixturesHidden() {
+        let records = [rec("helga-256k:helga:pass-task", task: "/var/folders/w4/abc/T/tmp.X/pass-task"),
+                       rec("f2", task: "/private/tmp/tmp.Y/reject-task"),
+                       rec("real", task: "/Users/x/scout/tasks/done/803b")]
+        XCTAssertEqual(JobFeed.clean(records, includeBenchRuns: false, staleAfter: 3600, now: Date()).map(\.id), ["real"])
+    }
+
+    func testEventWithDifferentCaseIDMergesIntoScannedRecord() {
+        let scanned = JobRecord(id: "Scout:peer:adhoc-1", project: "Scout", workflow: .peer, status: .complete,
+                                title: "Scout: Real", model: nil, host: nil, taskPath: "/r/scout/adhoc-1", artifactPath: nil,
+                                summary: "s", output: "o", updatedAt: Date(timeIntervalSince1970: 10), eventCount: 0)
+        let event = JobEvent(jobID: "scout:peer:adhoc-1", timestamp: Date(timeIntervalSince1970: 5), project: "scout",
+                             workflow: .peer, status: .complete, title: "Requirements Contract", taskPath: "/r/scout/adhoc-1")
+        let merged = JobFeed.merge(artifacts: [scanned], events: [event], projectRoots: [:], runsRoot: "/nonexistent")
+        XCTAssertEqual(merged.map(\.id), ["Scout:peer:adhoc-1"])
+        XCTAssertEqual(merged[0].title, "Scout: Real")
+        XCTAssertEqual(merged[0].eventCount, 1)
+    }
+}

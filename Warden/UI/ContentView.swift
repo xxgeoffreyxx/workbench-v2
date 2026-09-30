@@ -64,6 +64,7 @@ struct ContentView: View {
                         JobsListView()
                             .navigationSplitViewColumnWidth(min: 180, ideal: 240, max: 400)
                     }
+                    WhatsOnlineBox()
                 }
             } detail: {
                 Group {
@@ -156,6 +157,10 @@ struct ContentView: View {
         }
         .onChange(of: selectedChat) { oldValue, newValue in
             setupSelectedChatChange(oldValue: oldValue, newValue: newValue)
+            hub.viewingChatID = sidebarMode == .chats ? newValue?.id : nil
+        }
+        .onChange(of: sidebarMode) { _, mode in
+            hub.viewingChatID = mode == .chats ? selectedChat?.id : nil
         }
         .onChange(of: selectedProject) { oldValue, newValue in
             setupSelectedProjectChange(oldValue: oldValue, newValue: newValue)

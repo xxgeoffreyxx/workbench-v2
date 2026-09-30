@@ -23,12 +23,19 @@ final class WorkbenchHub: ObservableObject {
     @Published private(set) var residentModels: [ResidentModel] = []
     @Published private(set) var lastRouterError: String?
     @Published var selectedJobID: String?
+    /// Latest thermal sample per model host (see HostThermals).
+    @Published private(set) var thermals: [String: HostThermals] = [:]
+    /// The chat on screen in the main window, so a reply that lands there isn't counted as unread.
+    var viewingChatID: UUID? {
+        didSet { if let viewingChatID { markChatViewed(viewingChatID) } }
+    }
 
     /// Chats with a reply currently streaming, keyed by chat id.
     @Published private(set) var busyChats: [UUID: String] = [:]
 
     private var jobTimer: Timer?
     private var routerTimer: Timer?
+    private var thermalTimer: Timer?
     private var jobsLoadedOnce = false
 
     var runningJobs: [JobRecord] { jobs.filter { $0.status == .running } }
@@ -43,17 +50,24 @@ final class WorkbenchHub: ObservableObject {
         routerTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { _ in
             Task { @MainActor in WorkbenchHub.shared.refreshRouter() }
         }
+        refreshThermals()
+        thermalTimer = Timer.scheduledTimer(withTimeInterval: HostThermals.pollInterval, repeats: true) { _ in
+            Task { @MainActor in WorkbenchHub.shared.refreshThermals() }
+        }
     }
 
     // MARK: - Chats
 
     func chatStarted(_ id: UUID, name: String) {
         busyChats[id] = name
+        // Sending a message touches the chat; that isn't a new reply.
+        if viewingChatID == id { markChatViewed(id) }
         refreshActivity()
     }
 
     func chatFinished(_ id: UUID, name: String, preview: String, failed: Bool = false) {
         busyChats.removeValue(forKey: id)
+        if viewingChatID == id, NSApp.isActive { markChatViewed(id) }
         refreshActivity()
         WorkbenchNotifier.shared.post(
             .replyFinished,
@@ -61,6 +75,42 @@ final class WorkbenchHub: ObservableObject {
             body: preview.isEmpty ? "Reply finished" : preview,
             userInfo: [WorkbenchNotifier.chatIDKey: id.uuidString]
         )
+    }
+
+    private static let chatViewedKey = "workbench.chatLastViewed"
+
+    func markChatViewed(_ id: UUID, at date: Date = Date()) {
+        var viewed = UserDefaults.standard.dictionary(forKey: Self.chatViewedKey) as? [String: Double] ?? [:]
+        viewed[id.uuidString] = date.timeIntervalSince1970
+        UserDefaults.standard.set(viewed, forKey: Self.chatViewedKey)
+    }
+
+    /// When the chat was last looked at. Nothing before unread tracking started counts as new, so old chats never
+    /// light up; the first time a chat is seen, its current state becomes the baseline.
+    func chatLastViewed(_ id: UUID, updatedAt: Date) -> Date {
+        let defaults = UserDefaults.standard
+        let since = defaults.object(forKey: "workbench.chatUnreadSince") as? Double ?? {
+            let now = Date().timeIntervalSince1970
+            defaults.set(now, forKey: "workbench.chatUnreadSince")
+            return now
+        }()
+        let viewed = defaults.dictionary(forKey: Self.chatViewedKey) as? [String: Double] ?? [:]
+        guard let seconds = viewed[id.uuidString] else {
+            markChatViewed(id, at: updatedAt)
+            return max(updatedAt, Date(timeIntervalSince1970: since))
+        }
+        return Date(timeIntervalSince1970: max(seconds, since))
+    }
+
+    // MARK: - Thermals
+
+    func refreshThermals() {
+        Task.detached(priority: .utility) {
+            for host in HostThermals.hosts {
+                guard let sample = HostThermals.sample(host: host) else { continue }
+                await MainActor.run { WorkbenchHub.shared.thermals[host] = sample }
+            }
+        }
     }
 
     // MARK: - Jobs

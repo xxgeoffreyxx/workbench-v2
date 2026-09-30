@@ -149,8 +149,21 @@ public enum JobFeed {
         }
     }
 
+    /// Bench harness runs, and Helga test-harness fixtures (pass/reject/error-task) that live in temp directories.
     static func isBenchRun(_ record: JobRecord) -> Bool {
-        [record.taskPath, record.artifactPath].contains { $0?.contains("/.bench-runs/") == true }
+        [record.taskPath, record.artifactPath].contains { path in
+            guard let path else { return false }
+            return path.contains("/.bench-runs/") || tempPrefixes.contains { path.hasPrefix($0) }
+        }
+    }
+
+    static let tempPrefixes = ["/var/folders/", "/private/var/folders/", "/tmp/", "/private/tmp/"]
+
+    /// Workflow plus task/run id, case-insensitive, so "scout:peer:adhoc-1" and "Scout:peer:adhoc-1" are one job.
+    static func dedupeKey(workflow: JobWorkflow, id: String, taskPath: String?) -> String {
+        let taskID = taskPath.map { URL(fileURLWithPath: $0).lastPathComponent }
+            ?? id.split(separator: ":").last.map(String.init) ?? id
+        return "\(workflow.rawValue):\(taskID)".lowercased()
     }
 
     /// What a job's folder holds, for jobs that recorded no output: the files, and the tail of the newest log.
@@ -239,11 +252,17 @@ public enum JobFeed {
                       runsRoot: String? = nil) -> [JobRecord] {
         var recordsByID: [String: JobRecord] = [:]
         var artifactsByID: [String: JobRecord] = [:]
+        var idByKey: [String: String] = [:]
         for record in artifacts {
             recordsByID[record.id] = record
             artifactsByID[record.id] = record
+            idByKey[dedupeKey(workflow: record.workflow, id: record.id, taskPath: record.taskPath)] = record.id
         }
-        for event in events {
+        for var event in events {
+            if recordsByID[event.jobID] == nil,
+               let known = idByKey[dedupeKey(workflow: event.workflow, id: event.jobID, taskPath: event.taskPath)] {
+                event.jobID = known
+            }
             let existing = recordsByID[event.jobID]
             if artifactsByID[event.jobID] == nil, event.workflow != .background,
                let found = evidenceRecord(for: event, projectRoots: projectRoots, runsRoot: runsRoot ?? hosakaRunsRoot) {
@@ -255,7 +274,7 @@ public enum JobFeed {
             let eventIsNewer = artifact.map { event.timestamp > $0.updatedAt } ?? true
             recordsByID[event.jobID] = JobRecord(
                 id: event.jobID,
-                project: event.project,
+                project: artifact?.project ?? event.project,
                 workflow: event.workflow,
                 status: eventIsNewer ? event.status : (artifact?.status ?? event.status),
                 title: artifact?.title ?? event.title,
