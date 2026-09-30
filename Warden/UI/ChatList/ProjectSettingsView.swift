@@ -134,7 +134,7 @@ struct ProjectSettingsView: View {
                 }
 
                 if let createdAt = project.createdAt {
-                    Label("Created \(createdAt, style: .relative)", systemImage: "calendar")
+                    Label("Created \(createdAt.formatted(.dateTime.month(.abbreviated).day().hour().minute()))", systemImage: "calendar")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
