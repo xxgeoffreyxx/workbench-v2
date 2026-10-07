@@ -153,14 +153,15 @@ public enum ModelCatalog {
                 )
             }
 
-            if !status.ready,
+            if optionsByID[canonical]?.ready == false,
                showCloudFallbacks,
                status.cloud_fallback?.configured == true,
                let cloudModel = status.cloud_fallback?.model {
+                let cloudTitle = displayTitle(for: cloudModel)
                 optionsByID["\(canonical)-cloud"] = RouterModel(
                     id: "http://127.0.0.1:8110/v1#\(canonical)-cloud",
                     modelID: canonical,
-                    title: "Alibaba \(title)",
+                    title: cloudTitle.hasPrefix("Alibaba ") ? cloudTitle : "Alibaba \(cloudTitle)",
                     subtitle: "\(status.cloud_fallback?.provider ?? "Alibaba Cloud") · fallback online",
                     role: cloudModel,
                     baseURL: "http://127.0.0.1:8110/v1",

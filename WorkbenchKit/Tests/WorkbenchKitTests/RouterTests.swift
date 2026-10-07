@@ -91,6 +91,35 @@ final class RouterTests: XCTestCase {
         XCTAssertEqual(ModelCatalog.residentModels(from: health.models), [ResidentModel(canonical: "ornith", title: "Qwen3.5-9B Q6 (M1 Max)", host: "m1max", ready: true)])
     }
 
+    func testReadyCanonicalSuppressesOfflineAliasCloudTwin() throws {
+        let json = """
+        {"ok":true,"network_context":{"cloud_fallback_enabled":true,"on_home_local":false,"has_thunderbolt_link_local":false},"models":{
+          "ornith":{"host":"m1max","model":"Qwen3.5-9B-6bit","label":"Qwen3.5-9B Q6 (M1 Max)","ready":true},
+          "hosaka-helga":{"host":"m1max","model":"ornith-stale","ready":false,"cloud_fallback":{"configured":true,"provider":"Alibaba Cloud","model":"qwen-plus"}}
+        }}
+        """
+        let health = try JSONDecoder().decode(RouterHealthResponse.self, from: Data(json.utf8))
+        let options = ModelCatalog.models(from: health).filter { $0.baseURL == ModelCatalog.routerBaseURL && $0.modelID == "ornith" }
+        XCTAssertEqual(options.count, 1)
+        XCTAssertEqual(options.first?.title, "Qwen3.5-9B Q6 (M1 Max)")
+        XCTAssertTrue(try XCTUnwrap(options.first).ready)
+    }
+
+    func testOfflineCanonicalCloudFallbackUsesCloudModelTitle() throws {
+        let json = """
+        {"ok":true,"network_context":{"cloud_fallback_enabled":true,"on_home_local":false,"has_thunderbolt_link_local":false},"models":{
+          "ornith":{"host":"m1max","model":"Qwen3.5-9B-6bit","label":"Qwen3.5-9B Q6 (M1 Max)","ready":false,"cloud_fallback":{"configured":true,"provider":"Alibaba Cloud","model":"qwen-plus"}}
+        }}
+        """
+        let health = try JSONDecoder().decode(RouterHealthResponse.self, from: Data(json.utf8))
+        let fallback = try XCTUnwrap(ModelCatalog.models(from: health).first { $0.id == ModelCatalog.routerBaseURL + "#ornith-cloud" })
+        XCTAssertEqual(fallback.title, "Alibaba Qwen Plus")
+        XCTAssertEqual(fallback.modelID, "ornith")
+        XCTAssertEqual(fallback.role, "qwen-plus")
+        XCTAssertTrue(fallback.ready)
+        XCTAssertEqual(fallback.subtitle, "Alibaba Cloud · fallback online")
+    }
+
     func testDorsettSummary() {
         let parsed = Dorsett.summary(from: #"{"summary":"Good fit {really}","score":8} trailing"#)
         XCTAssertEqual(parsed?.summary, "Good fit {really}")
