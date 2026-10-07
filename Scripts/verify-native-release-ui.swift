@@ -109,6 +109,23 @@ let labels = elements(box).flatMap { e -> [String] in
 }
 guard expectedLabels.allSatisfy({ expected in labels.contains(where: { $0.contains(expected) }) }),
       expectedHosts.allSatisfy({ expected in labels.contains(where: { $0.contains(expected) }) }) else { fail("What's online box does not show the accepted router labels and hosts") }
+let boxElements = elements(box)
+func displayedText(_ element: AXUIElement) -> [String] {
+    var values = text(element)
+    if (attr(element, kAXRoleAttribute) as? String) == kAXStaticTextRole,
+       let value = attr(element, kAXValueAttribute) as? String { values.append(value) }
+    return values
+}
+var residentGeometry: [[String: Any]] = []
+for route in routes {
+    let label = route["display_label"]!, host = route["host"]!
+    guard let titleElement = boxElements.first(where: { displayedText($0).contains(where: { $0.contains(label) }) }),
+          let titleRect = rect(titleElement),
+          let hostRect = boxElements.filter({ displayedText($0).contains(host) }).compactMap(rect).first(where: {
+              $0.minY >= titleRect.maxY - 1 && $0.minY - titleRect.maxY < 20 && abs($0.minX - titleRect.minX) < 8
+          }) else { fail("Accepted host \(host) is not beneath router label \(label)") }
+    residentGeometry.append(["label": label, "host": host, "label_bounds": geometry(titleRect), "host_bounds": geometry(hostRect)])
+}
 press("Chats")
 guard waitFor({ selected("Chats") }) else { fail("Chats tab did not become selected") }
 if !inspectorLabels.allSatisfy({ find($0) != nil }) {
@@ -120,6 +137,7 @@ guard waitFor({ inspectorLabels.allSatisfy { find($0) != nil } }) else { fail("C
 let report: [String: Any] = ["observed_at": ISO8601DateFormatter().string(from: Date()), "application": appPath,
     "pid": app.processIdentifier, "jobs_bottom_left_box": geometry(boxRect), "window": geometry(windowRect),
     "resident_labels": labels.filter { label in expectedLabels.contains(where: { label.contains($0) }) }, "chats_inspector_controls": inspectorLabels,
+    "resident_geometry": residentGeometry,
     "original_tab": originalTab, "ui_preferences_restored": true]
 guard restoreOriginalUI() else { fail("Original UI preferences could not be restored") }
 try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]).write(to: URL(fileURLWithPath: CommandLine.arguments[2]), options: .atomic)
