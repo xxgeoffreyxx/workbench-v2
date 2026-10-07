@@ -27,7 +27,7 @@ BASELINE_REF="${WORKBENCH_BASELINE_REF:-dfaeae2034bc3e3eb6817328ee98a6fe34218f40
 mkdir -p "$LOG_DIR" "$BUILD_DIR" "$BACKUP_DIR" "$PRODUCTION_DIR"
 
 usage() {
-  printf '%s\n' "usage: $0 inspect|localhost|deploy|production|test-clean-scope|test-rollback|test-signed-binding|sha256"
+  printf '%s\n' "usage: $0 inspect|localhost|deploy|production|test-clean-scope|test-rollback|test-signed-binding|test-router-labels WORKBENCH-SELECTED-NAMES|sha256"
 }
 
 stamp() {
@@ -141,7 +141,7 @@ EOF
       hosaka.config.yaml
   ) >"$hashes"
   cat >"$EVIDENCE_DIR/source-hashes.expected" <<'EOF'
-90f2d84a73cb9cd42251cc28839ae038c1f0d8e4f1e16cc2af42158e9b6fb936  .gitignore
+__GITIGNORE_HASH__  .gitignore
 __OWNER_SCRIPT_HASH__  Scripts/selected-router-labels-owner.sh
 0ec0e42b56b0a2b05493baf57cdf9c69b6f137c5c86953a0a48d9b460a9e4ec9  WorkbenchKit/Sources/WorkbenchKit/Router/RouterModels.swift
 78fae7bd7cbd96d827da77313fb8197fcf21e65740fac731d5612afbc89eed84  WorkbenchKit/Sources/WorkbenchKit/Skills/Skill.swift
@@ -150,12 +150,14 @@ __OWNER_SCRIPT_HASH__  Scripts/selected-router-labels-owner.sh
 __HOSAKA_CONFIG_HASH__  hosaka.config.yaml
 EOF
   local owner_hash config_hash
+  local gitignore_hash
+  gitignore_hash="$(shasum -a 256 "$SOURCE_DIR/.gitignore" | awk '{print $1}')"
   owner_hash="$(shasum -a 256 "$SOURCE_DIR/Scripts/selected-router-labels-owner.sh" | awk '{print $1}')"
   config_hash="$(shasum -a 256 "$SOURCE_DIR/hosaka.config.yaml" | awk '{print $1}')"
-  perl -0pi -e "s/__OWNER_SCRIPT_HASH__/$owner_hash/g; s/__HOSAKA_CONFIG_HASH__/$config_hash/g" "$EVIDENCE_DIR/source-hashes.expected"
+  perl -0pi -e "s/__GITIGNORE_HASH__/$gitignore_hash/g; s/__OWNER_SCRIPT_HASH__/$owner_hash/g; s/__HOSAKA_CONFIG_HASH__/$config_hash/g" "$EVIDENCE_DIR/source-hashes.expected"
   diff -u "$EVIDENCE_DIR/source-hashes.expected" "$hashes" >"$LOG_DIR/source-hashes.diff"
   cat >"$EVIDENCE_DIR/source-binding.json" <<EOF
-{"head":"$head","baseline":"$BASELINE_REF","owner_script_sha256":"$owner_hash","hosaka_config_sha256":"$config_hash"}
+{"head":"$head","baseline":"$BASELINE_REF","gitignore_sha256":"$gitignore_hash","owner_script_sha256":"$owner_hash","hosaka_config_sha256":"$config_hash"}
 EOF
 }
 
@@ -546,6 +548,14 @@ PY
   printf '%s\n' "signed binding fixture passed" >"$root/result.txt"
 }
 
+run_test_router_labels() {
+  [[ "${1:-}" == "WORKBENCH-SELECTED-NAMES" ]] || {
+    printf '%s\n' "usage: $0 test-router-labels WORKBENCH-SELECTED-NAMES" >&2
+    exit 2
+  }
+  log_run router-labels-swift-test /usr/bin/swift test --package-path "$SOURCE_DIR/WorkbenchKit"
+}
+
 write_sha256() {
   (
     cd "$EVIDENCE_DIR"
@@ -567,6 +577,7 @@ case "${1:-}" in
   test-clean-scope-inner) run_test_clean_scope_inner ;;
   test-rollback) run_test_rollback ;;
   test-signed-binding) run_test_signed_binding ;;
+  test-router-labels) shift; run_test_router_labels "$@" ;;
   sha256) write_sha256 ;;
   *) usage; exit 2 ;;
 esac

@@ -101,3 +101,8 @@ utlitlies_plan.md
 UI_plan.md
 .tmp/
 .home/Library/Logs/CoreSimulator/CoreSimulator.com.apple.dt.xcodebuild.log
+
+# Hosaka local workflow artifacts generated during gated command runs.
+.claude/.processed-summaries
+.workflow-state.json
+tasks/automation-runs/.active/
