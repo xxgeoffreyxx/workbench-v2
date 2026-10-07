@@ -2,8 +2,15 @@ import AppKit
 import ApplicationServices
 import Foundation
 
+var restoreUI: (() -> Bool)?
+func restoreOriginalUI() -> Bool {
+    let restore = restoreUI
+    restoreUI = nil
+    return restore?() ?? true
+}
 func fail(_ message: String) -> Never {
-    FileHandle.standardError.write(Data((message + "\n").utf8)); exit(1)
+    let restored = restoreOriginalUI()
+    FileHandle.standardError.write(Data((message + (restored ? "" : "; original UI preferences could not be restored") + "\n").utf8)); exit(1)
 }
 guard CommandLine.arguments.count == 4 else { fail("usage: verify-native-release-ui.swift APP OUTPUT ACCEPTANCE_INPUT") }
 let appPath = URL(fileURLWithPath: CommandLine.arguments[1]).standardizedFileURL.path
@@ -68,6 +75,26 @@ func geometry(_ r: CGRect) -> [String: Double] {
     ["x": r.minX, "y": r.minY, "width": r.width, "height": r.height]
 }
 app.activate(options: [.activateAllWindows])
+guard let originalTab = ["Jobs", "Chats"].first(where: selected) else { fail("Cannot identify original selected tab") }
+var inspectorToggled = false
+let inspectorLabels = ["Chat settings", "Project folder and skills", "Model and router status"]
+restoreUI = {
+    var restored = true
+    if inspectorToggled {
+        if let button = find("Show or hide the inspector") {
+            restored = AXUIElementPerformAction(button, kAXPressAction as CFString) == .success
+                && waitFor({ !inspectorLabels.allSatisfy { find($0) != nil } })
+        } else { restored = false }
+    }
+    if !selected(originalTab) {
+        if let tab = find(originalTab) {
+            let tabRestored = AXUIElementPerformAction(tab, kAXPressAction as CFString) == .success
+                && waitFor({ selected(originalTab) })
+            restored = tabRestored && restored
+        } else { restored = false }
+    }
+    return restored
+}
 press("Jobs")
 guard waitFor({ selected("Jobs") }) else { fail("Jobs tab did not become selected") }
 guard waitFor({ find("WhatsOnlineBox") != nil }), let box = find("WhatsOnlineBox"),
@@ -84,14 +111,16 @@ guard expectedLabels.allSatisfy({ expected in labels.contains(where: { $0.contai
       expectedHosts.allSatisfy({ expected in labels.contains(where: { $0.contains(expected) }) }) else { fail("What's online box does not show the accepted router labels and hosts") }
 press("Chats")
 guard waitFor({ selected("Chats") }) else { fail("Chats tab did not become selected") }
-let inspectorLabels = ["Chat settings", "Project folder and skills", "Model and router status"]
 if !inspectorLabels.allSatisfy({ find($0) != nil }) {
     guard let button = find("Show or hide the inspector"), (attr(button, kAXEnabledAttribute) as? Bool) == true else { fail("Select an existing chat to verify the inspector") }
     press("Show or hide the inspector")
+    inspectorToggled = true
 }
 guard waitFor({ inspectorLabels.allSatisfy { find($0) != nil } }) else { fail("Chats inspector is not visible") }
 let report: [String: Any] = ["observed_at": ISO8601DateFormatter().string(from: Date()), "application": appPath,
     "pid": app.processIdentifier, "jobs_bottom_left_box": geometry(boxRect), "window": geometry(windowRect),
-    "resident_labels": labels.filter { label in expectedLabels.contains(where: { label.contains($0) }) }, "chats_inspector_controls": inspectorLabels]
+    "resident_labels": labels.filter { label in expectedLabels.contains(where: { label.contains($0) }) }, "chats_inspector_controls": inspectorLabels,
+    "original_tab": originalTab, "ui_preferences_restored": true]
+guard restoreOriginalUI() else { fail("Original UI preferences could not be restored") }
 try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]).write(to: URL(fileURLWithPath: CommandLine.arguments[2]), options: .atomic)
 print("Verified installed Jobs bottom-left box, accepted router labels/hosts, and Chats inspector")
