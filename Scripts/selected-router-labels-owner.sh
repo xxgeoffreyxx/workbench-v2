@@ -168,6 +168,7 @@ inspect_installed() {
 }
 
 run_localhost() {
+  require_acceptance_input
   verify_source_scope_and_hashes record
   log_run swift-test /usr/bin/swift test --package-path "$SOURCE_DIR/WorkbenchKit"
   log_run xcodebuild-warden /usr/bin/xcodebuild -project "$SOURCE_DIR/Warden.xcodeproj" -scheme Warden -configuration Release -destination 'platform=macOS,arch=arm64' -derivedDataPath "$DERIVED_DATA" CODE_SIGNING_ALLOWED=NO ENABLE_DEBUG_DYLIB=NO build
@@ -429,11 +430,31 @@ PY
 }
 
 reopen_workbench() {
+  # Open the installed bundle by path: `open -a` can resolve a backup or DerivedData copy.
   if [[ -n "${WORKBENCH_OWNER_OPEN_STUB:-}" ]]; then
-    printf '%s\n' "open -a Workbench" >>"$WORKBENCH_OWNER_OPEN_STUB" || return 1
+    printf '%s\n' "open $INSTALLED_APP" >>"$WORKBENCH_OWNER_OPEN_STUB" || return 1
     return 0
   fi
-  /usr/bin/open -a Workbench >/dev/null 2>&1
+  /usr/bin/open "$INSTALLED_APP" >>"$LOG_DIR/reopen-workbench.stdout.log" 2>>"$LOG_DIR/reopen-workbench.stderr.log" || return 1
+  wait_for_installed_process
+}
+
+wait_for_installed_process() {
+  for _ in $(seq 1 30); do
+    if observe_running_app | grep -F "$INSTALLED_APP/Contents/MacOS/Workbench" >/dev/null; then
+      return 0
+    fi
+    sleep 1
+  done
+  printf '%s\n' "installed Workbench process did not appear at $INSTALLED_APP" >&2
+  return 1
+}
+
+require_acceptance_input() {
+  [[ -n "$ACCEPTANCE_INPUT" && -s "$ACCEPTANCE_INPUT" ]] || {
+    printf '%s\n' "WORKBENCH_ACCEPTANCE_INPUT is required for localhost, deploy and production" >&2
+    exit 1
+  }
 }
 
 restore_backup_and_reopen() {
@@ -506,6 +527,7 @@ install_candidate_files() {
 }
 
 run_deploy() {
+  require_acceptance_input
   [[ -d "$CANDIDATE_APP" ]] || { printf '%s\n' "run localhost first; missing $CANDIDATE_APP" >&2; exit 1; }
   require_router_idle
   verify_source_scope_and_hashes
@@ -543,25 +565,19 @@ run_deploy() {
     restore_displaced_and_reopen "$backup" || { printf '%s\n' "component validation and original restoration failed" >&2; exit 1; }
     exit 1
   fi
-  if ! /usr/bin/open -a Workbench >"$LOG_DIR/reopen-workbench.stdout.log" 2>"$LOG_DIR/reopen-workbench.stderr.log"; then
-    restore_displaced_and_reopen "$backup" || { printf '%s\n' "candidate open and original restoration failed" >&2; exit 1; }
-    exit 1
+  if reopen_workbench; then
+    printf '%s\n' "$backup" >"$EVIDENCE_DIR/last-backup-path.txt"
+    rm -rf "$LAST_CANDIDATE_SWAP_ROOT"
+    LAST_CANDIDATE_SWAP_ROOT=""
+    return 0
   fi
-  for _ in $(seq 1 30); do
-    if observe_running_app | grep -F "$INSTALLED_APP/Contents/MacOS/Workbench" >/dev/null; then
-      printf '%s\n' "$backup" >"$EVIDENCE_DIR/last-backup-path.txt"
-      rm -rf "$LAST_CANDIDATE_SWAP_ROOT"
-      LAST_CANDIDATE_SWAP_ROOT=""
-      return 0
-    fi
-    sleep 1
-  done
   restore_displaced_and_reopen "$backup" || { printf '%s\n' "Workbench did not reopen and original restoration failed" >&2; exit 1; }
   printf '%s\n' "Workbench did not reopen from candidate; original app restored and reopened" >&2
   exit 1
 }
 
 run_production() {
+  require_acceptance_input
   verify_source_scope_and_hashes
   require_bundle_identity "$INSTALLED_APP" installed || exit 1
   require_signature "$INSTALLED_APP" installed-production || exit 1
@@ -810,7 +826,8 @@ run_test_rollback() (
   fi
   [[ ! -e "$open_stub" ]] || { printf '%s\n' "fixture pure restore unexpectedly reopened Workbench" >&2; exit 1; }
   restore_backup_and_reopen "$backup"
-  grep -F "open -a Workbench" "$open_stub" >/dev/null
+  grep -Fx "open $INSTALLED_APP" "$open_stub" >/dev/null || { printf '%s\n' "rollback reopen did not target the installed bundle path" >&2; exit 1; }
+  if grep -F "open -a" "$open_stub" >/dev/null; then printf '%s\n' "rollback reopen used name-based open -a" >&2; exit 1; fi
   cmp "$backup/Contents/MacOS/Workbench" "$INSTALLED_APP/Contents/MacOS/Workbench" >"$root/cmp.log"
   # All overrides are confined to this fixture subprocess; real deployment keeps native signature checks.
   local force_restore_copy_failure=1
@@ -986,6 +1003,7 @@ PYCODE
     mkdir -p "$CANDIDATE_APP"
     ln -s app "$INSTALLED_APP/Contents/MacOS/Workbench"
     require_router_idle() { :; }
+    require_acceptance_input() { :; }
     verify_source_scope_and_hashes() { :; }
     revalidate_candidate_binding() { :; }
     require_bundle_identity() { :; }
@@ -1029,6 +1047,18 @@ SH
   cat "$LOG_DIR/router-labels-swift-test.stderr.log" >&2
 }
 
+run_test_acceptance_required() {
+  local phase out
+  for phase in localhost deploy production; do
+    out="$(mktemp -d)"
+    if WORKBENCH_ACCEPTANCE_INPUT="" WORKBENCH_OWNER_EVIDENCE_DIR="$out" bash "$SCRIPT_DIR/selected-router-labels-owner.sh" "$phase" >"$out/stdout.log" 2>"$out/stderr.log"; then
+      printf '%s\n' "$phase ran without WORKBENCH_ACCEPTANCE_INPUT" >&2; exit 1
+    fi
+    grep -F "WORKBENCH_ACCEPTANCE_INPUT is required" "$out/stderr.log" >/dev/null || { printf '%s\n' "$phase failed for a reason other than missing acceptance input" >&2; cat "$out/stderr.log" >&2; exit 1; }
+    rm -rf "$out"
+  done
+  printf '%s\n' "acceptance input required for localhost, deploy, production: PASS"
+}
 
 write_sha256() {
   (
@@ -1052,6 +1082,7 @@ case "${1:-}" in
   test-rollback) run_test_rollback ;;
   test-signed-binding) run_test_signed_binding ;;
   test-component-entitlements) run_test_component_entitlements ;;
+  test-acceptance-required) run_test_acceptance_required ;;
   test-router-labels) shift; run_test_router_labels "$@" ;;
   sha256) write_sha256 ;;
   *) usage; exit 2 ;;
