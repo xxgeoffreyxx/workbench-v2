@@ -15,7 +15,7 @@ LOG_DIR="$EVIDENCE_DIR/logs"
 BUILD_DIR="$EVIDENCE_DIR/build"
 BACKUP_DIR="$EVIDENCE_DIR/backups"
 PRODUCTION_DIR="$EVIDENCE_DIR/production"
-CANDIDATE_APP="$DERIVED_DATA/Build/Products/Debug/Workbench.app"
+CANDIDATE_APP="$DERIVED_DATA/Build/Products/Release/Workbench.app"
 ACCEPTANCE_INPUT="${WORKBENCH_ACCEPTANCE_INPUT:-}"
 
 EXPECTED_BUNDLE_ID="me.mccaleb.Workbench"
@@ -170,17 +170,19 @@ inspect_installed() {
 run_localhost() {
   verify_source_scope_and_hashes record
   log_run swift-test /usr/bin/swift test --package-path "$SOURCE_DIR/WorkbenchKit"
-  log_run xcodebuild-warden /usr/bin/xcodebuild -project "$SOURCE_DIR/Warden.xcodeproj" -scheme Warden -destination 'platform=macOS,arch=arm64' -derivedDataPath "$DERIVED_DATA" CODE_SIGNING_ALLOWED=NO build
+  log_run xcodebuild-warden /usr/bin/xcodebuild -project "$SOURCE_DIR/Warden.xcodeproj" -scheme Warden -configuration Release -destination 'platform=macOS,arch=arm64' -derivedDataPath "$DERIVED_DATA" CODE_SIGNING_ALLOWED=NO ENABLE_DEBUG_DYLIB=NO build
   [[ -d "$CANDIDATE_APP" ]] || { printf '%s\n' "candidate app missing: $CANDIDATE_APP" >&2; exit 1; }
   require_bundle_identity "$CANDIDATE_APP" candidate || exit 1
   shasum -a 256 "$CANDIDATE_APP/Contents/MacOS/Workbench" "$CANDIDATE_APP/Contents/Info.plist" >"$EVIDENCE_DIR/candidate-app-sha256.txt"
-  local exe_hash info_hash head source_hash
+  macho_manifest_control snapshot "$CANDIDATE_APP" "$EVIDENCE_DIR/unsigned-macho-manifest.json"
+  local exe_hash info_hash head source_hash macho_hash
+  macho_hash="$(shasum -a 256 "$EVIDENCE_DIR/unsigned-macho-manifest.json" | awk '{print $1}')"
   exe_hash="$(shasum -a 256 "$CANDIDATE_APP/Contents/MacOS/Workbench" | awk '{print $1}')"
   info_hash="$(shasum -a 256 "$CANDIDATE_APP/Contents/Info.plist" | awk '{print $1}')"
   head="$(git -C "$SOURCE_DIR" rev-parse HEAD)"
   source_hash="$(shasum -a 256 "$EVIDENCE_DIR/source-scope.json" | awk '{print $1}')"
   cat >"$EVIDENCE_DIR/candidate-binding.json" <<EOF
-{"source_head":"$head","source_binding_sha256":"$source_hash","candidate_app":"$CANDIDATE_APP","executable_sha256":"$exe_hash","info_plist_sha256":"$info_hash"}
+{"source_head":"$head","source_binding_sha256":"$source_hash","candidate_app":"$CANDIDATE_APP","executable_sha256":"$exe_hash","info_plist_sha256":"$info_hash","unsigned_macho_manifest_sha256":"$macho_hash"}
 EOF
 }
 
@@ -235,6 +237,44 @@ quit_exact_current_app_if_running() {
   exit 1
 }
 
+macho_manifest_control() {
+  python3 - "$@" <<'PYMACHO'
+import hashlib,json,os,pathlib,plistlib,sys
+mode,app_arg,manifest_arg=sys.argv[1:4]
+app=pathlib.Path(app_arg).resolve();manifest=pathlib.Path(manifest_arg)
+magic={bytes.fromhex(x) for x in ['cffaedfe','cefaedfe','feedfacf','feedface','cafebabe','bebafeca','cafebabf','bfbafeca']}
+files={};aliases={}
+for base in [app/'Contents/MacOS',app/'Contents/Frameworks']:
+ for root,dirs,names in os.walk(base,followlinks=False):
+  root=pathlib.Path(root)
+  for name in dirs+names:
+   p=root/name
+   if p.is_symlink():
+    target=p.resolve(strict=True)
+    if not target.is_relative_to(app):raise SystemExit('escaping app symlink: '+str(p))
+    aliases[str(p.relative_to(app))]=str(target.relative_to(app))
+  dirs[:]=[n for n in dirs if not (root/n).is_symlink()]
+  for name in names:
+   p=root/name
+   if p.is_symlink():continue
+   with p.open('rb') as f:header=f.read(4)
+   if header not in magic:continue
+   rel=str(p.relative_to(app))
+   if name.endswith('.debug.dylib') or name=='__preview.dylib':raise SystemExit('Debug/preview Mach-O rejected: '+rel)
+   files[rel]={'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'size':p.stat().st_size}
+info=plistlib.loads((app/'Contents/Info.plist').read_bytes());main='Contents/MacOS/'+info['CFBundleExecutable']
+if main not in files:raise SystemExit('main executable is not a physical Mach-O')
+actual={'version':1,'main':main,'files':files,'aliases':aliases}
+if mode=='snapshot':manifest.write_text(json.dumps(actual,sort_keys=True,indent=2)+'\n')
+elif mode=='verify':
+ if actual!=json.loads(manifest.read_text()):raise SystemExit('full Mach-O bytes/layout changed')
+elif mode=='layout':
+ expected=json.loads(manifest.read_text())
+ if set(files)!=set(expected['files']) or aliases!=expected['aliases'] or main!=expected['main']:raise SystemExit('unexpected candidate Mach-O component/layout')
+else:raise SystemExit('unknown Mach-O manifest mode')
+PYMACHO
+}
+
 component_signature_control() {
   python3 - "$@" <<'PYCODE'
 import base64, hashlib, json, os, pathlib, plistlib, re, subprocess, sys
@@ -245,9 +285,9 @@ def invoke(args):
     if r.returncode: raise RuntimeError('codesign failed: '+r.stderr.decode(errors='replace'))
     return (r.stdout+r.stderr).decode(errors='replace')
 def components():
-    nested=app/'Contents/Frameworks/Sparkle.framework'
+    roots=[app/'Contents/MacOS',app/'Contents/Frameworks']
     bundles={app}
-    if nested.exists():
+    for nested in roots:
         for root, dirs, files in os.walk(nested,followlinks=False):
             root=pathlib.Path(root)
             dirs[:]=[d for d in dirs if not (root/d).is_symlink()]
@@ -262,14 +302,14 @@ def components():
                 for x in [bundle/'Contents/MacOS'/executable,bundle/executable]:
                     if x.exists(): excluded.add(x.resolve())
     found=set(bundles)
-    if nested.exists():
+    for nested in roots:
         for root, dirs, files in os.walk(nested,followlinks=False):
             root=pathlib.Path(root); dirs[:]=[d for d in dirs if not (root/d).is_symlink()]
             for name in files:
                 path=root/name
                 if path.is_symlink() or path.resolve() in excluded: continue
                 magic=path.read_bytes()[:4]
-                if magic in (b'\xcf\xfa\xed\xfe',b'\xce\xfa\xed\xfe',b'\xfe\xed\xfa\xcf',b'\xfe\xed\xfa\xce',b'\xca\xfe\xba\xbe',b'\xbe\xba\xfe\xca'):
+                if magic in (b'\xcf\xfa\xed\xfe',b'\xce\xfa\xed\xfe',b'\xfe\xed\xfa\xcf',b'\xfe\xed\xfa\xce',b'\xca\xfe\xba\xbe',b'\xbe\xba\xfe\xca',b'\xca\xfe\xba\xbf',b'\xbf\xba\xfe\xca'):
                     found.add(path)
     return sorted(str(p.relative_to(app)) for p in found)
 def signature(rel):
@@ -323,10 +363,13 @@ sign_candidate() {
   local identity manifest
   identity="${WORKBENCH_CODESIGN_IDENTITY:-$(installed_signing_identity)}"
   manifest="$EVIDENCE_DIR/installed-component-entitlements.json"
+  macho_manifest_control snapshot "$INSTALLED_APP" "$EVIDENCE_DIR/installed-macho-layout.json"
+  macho_manifest_control layout "$staged" "$EVIDENCE_DIR/installed-macho-layout.json"
   component_signature_control snapshot "$INSTALLED_APP" "$manifest"
   component_signature_control sign "$staged" "$manifest" "$identity"
   require_bundle_identity "$staged" signed-candidate
   require_signature "$staged" signed-candidate
+  macho_manifest_control snapshot "$staged" "$EVIDENCE_DIR/signed-macho-manifest.json"
   bind_signed_candidate "$staged"
   printf '%s\n' "$staged" >"$EVIDENCE_DIR/signed-candidate-path.txt"
 }
@@ -551,6 +594,9 @@ def h(path):
 payload = {
     "source_head": unsigned["source_head"],
     "source_binding_sha256": unsigned["source_binding_sha256"],
+    "unsigned_macho_manifest_sha256": unsigned["unsigned_macho_manifest_sha256"],
+    "signed_macho_manifest_sha256": h(out.parent / "signed-macho-manifest.json"),
+    "installed_macho_layout_sha256": h(out.parent / "installed-macho-layout.json"),
     "component_manifest_sha256": h(out.parent / "installed-component-entitlements.json"),
     "unsigned_executable_sha256": unsigned["executable_sha256"],
     "unsigned_info_plist_sha256": unsigned["info_plist_sha256"],
@@ -566,6 +612,7 @@ PY
 revalidate_candidate_binding() {
   local binding="$EVIDENCE_DIR/candidate-binding.json"
   [[ -s "$binding" ]] || { printf '%s\n' "missing candidate-binding.json; run localhost first" >&2; exit 1; }
+  macho_manifest_control verify "$CANDIDATE_APP" "$EVIDENCE_DIR/unsigned-macho-manifest.json" || return 1
   python3 - "$binding" "$SOURCE_DIR" "$CANDIDATE_APP" <<'PY'
 import json, hashlib, pathlib, subprocess, sys
 binding = json.loads(pathlib.Path(sys.argv[1]).read_text())
@@ -578,6 +625,8 @@ def h(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 if binding.get("source_binding_sha256") != h(pathlib.Path(sys.argv[1]).parent / "source-scope.json"):
     raise SystemExit("source/acceptance manifest changed since localhost")
+if binding.get("unsigned_macho_manifest_sha256") != h(pathlib.Path(sys.argv[1]).parent / "unsigned-macho-manifest.json"):
+    raise SystemExit("unsigned Mach-O manifest binding changed")
 if binding.get("executable_sha256") != h(candidate / "Contents/MacOS/Workbench"):
     raise SystemExit("candidate executable hash changed since localhost")
 if binding.get("info_plist_sha256") != h(candidate / "Contents/Info.plist"):
@@ -587,6 +636,7 @@ PY
 
 verify_installed_matches_signed_candidate() {
   local staged="$1"
+  macho_manifest_control verify "$INSTALLED_APP" "$EVIDENCE_DIR/signed-macho-manifest.json" || return 1
   python3 - "$INSTALLED_APP" "$staged" <<'PY'
 import hashlib, pathlib, sys
 installed = pathlib.Path(sys.argv[1])
@@ -602,6 +652,7 @@ PY
 verify_installed_matches_signed_candidate_binding() {
   local binding="$EVIDENCE_DIR/signed-candidate-binding.json"
   [[ -s "$binding" ]] || { printf '%s\n' "missing candidate-binding.json" >&2; return 1; }
+  macho_manifest_control verify "$INSTALLED_APP" "$EVIDENCE_DIR/signed-macho-manifest.json" || return 1
   python3 - "$binding" "$INSTALLED_APP" "$SOURCE_DIR" <<'PY'
 import json, hashlib, pathlib, subprocess, sys
 binding = json.loads(pathlib.Path(sys.argv[1]).read_text())
@@ -609,7 +660,7 @@ installed = pathlib.Path(sys.argv[2])
 head=subprocess.check_output(['git','-C',sys.argv[3],'rev-parse','HEAD'],text=True).strip()
 if binding.get('source_head')!=head:
     raise SystemExit('installed candidate binding is for a different source HEAD')
-for name,key in [('source-scope.json','source_binding_sha256'),('installed-component-entitlements.json','component_manifest_sha256')]:
+for name,key in [('source-scope.json','source_binding_sha256'),('installed-component-entitlements.json','component_manifest_sha256'),('unsigned-macho-manifest.json','unsigned_macho_manifest_sha256'),('signed-macho-manifest.json','signed_macho_manifest_sha256'),('installed-macho-layout.json','installed_macho_layout_sha256')]:
     if hashlib.sha256((pathlib.Path(sys.argv[1]).parent/name).read_bytes()).hexdigest()!=binding.get(key):
         raise SystemExit(f'bound {name} changed after signing')
 checks = {
@@ -632,12 +683,13 @@ make_minimal_app() {
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>Workbench</string>
 <key>CFBundleIdentifier</key><string>$EXPECTED_BUNDLE_ID</string>
 <key>CFBundleShortVersionString</key><string>$EXPECTED_VERSION</string>
 <key>CFBundleVersion</key><string>$EXPECTED_BUILD</string>
 </dict></plist>
 EOF
-  printf '%s\n' "$executable_text" >"$app/Contents/MacOS/Workbench"
+  printf '\317\372\355\376%s\n' "$executable_text" >"$app/Contents/MacOS/Workbench"
   printf '%s\n' 'codesign-placeholder' >"$app/Contents/_CodeSignature/CodeResources"
 }
 
@@ -824,8 +876,11 @@ run_test_signed_binding() {
   make_minimal_app "$root/signed.app" "signed-bytes"
   printf '%s\n' '{}' >"$root/evidence/source-scope.json"
   printf '%s\n' '{"components":[]}' >"$root/evidence/installed-component-entitlements.json"
+  macho_manifest_control snapshot "$root/unsigned.app" "$root/evidence/unsigned-macho-manifest.json"
+  macho_manifest_control snapshot "$root/signed.app" "$root/evidence/signed-macho-manifest.json"
+  cp "$root/evidence/signed-macho-manifest.json" "$root/evidence/installed-macho-layout.json"
   cat >"$root/evidence/candidate-binding.json" <<EOF
-{"source_head":"fixture-head","source_binding_sha256":"$(shasum -a 256 "$root/evidence/source-scope.json" | awk '{print $1}')","candidate_app":"$root/unsigned.app","executable_sha256":"$(shasum -a 256 "$root/unsigned.app/Contents/MacOS/Workbench" | awk '{print $1}')","info_plist_sha256":"$(shasum -a 256 "$root/unsigned.app/Contents/Info.plist" | awk '{print $1}')"}
+{"unsigned_macho_manifest_sha256":"$(shasum -a 256 "$root/evidence/unsigned-macho-manifest.json" | awk '{print $1}')","source_head":"fixture-head","source_binding_sha256":"$(shasum -a 256 "$root/evidence/source-scope.json" | awk '{print $1}')","candidate_app":"$root/unsigned.app","executable_sha256":"$(shasum -a 256 "$root/unsigned.app/Contents/MacOS/Workbench" | awk '{print $1}')","info_plist_sha256":"$(shasum -a 256 "$root/unsigned.app/Contents/Info.plist" | awk '{print $1}')"}
 EOF
   EVIDENCE_DIR="$root/evidence"
   bind_signed_candidate "$root/signed.app"
@@ -900,6 +955,23 @@ for row in rows:
         if pathlib.Path(row[-1])!=pathlib.Path(parent[-1]) and pathlib.Path(row[-1]).is_relative_to(pathlib.Path(parent[-1])):
             assert rows.index(row)<rows.index(parent)
 PYCODE
+  macho_manifest_control snapshot "$root/app" "$root/macho.json"
+  local sign_log_before
+  sign_log_before="$(shasum -a 256 "$root/sign-log.jsonl" | awk '{print $1}')"
+  printf '\317\372\355\376unexpected' >"$root/app/Contents/MacOS/unexpected.dylib"
+  if component_signature_control sign "$root/app" "$root/expected.json" 'Apple Development: Fixture'; then
+    printf '%s\n' 'unexpected Mach-O signing accepted' >&2; exit 1
+  fi
+  [[ "$(shasum -a 256 "$root/sign-log.jsonl" | awk '{print $1}')" == "$sign_log_before" ]] || { printf '%s\n' 'unexpected component was signed before rejection' >&2; exit 1; }
+  if macho_manifest_control layout "$root/app" "$root/macho.json"; then
+    printf '%s\n' 'unexpected Mach-O layout accepted' >&2; exit 1
+  fi
+  rm "$root/app/Contents/MacOS/unexpected.dylib"
+  macho_manifest_control verify "$root/app" "$root/macho.json"
+  printf x >>"$root/app/Contents/Frameworks/Sparkle.framework/Autoupdate"
+  if macho_manifest_control verify "$root/app" "$root/macho.json"; then
+    printf '%s\n' 'nested Mach-O mutation accepted' >&2; exit 1
+  fi
   export WB_FIXTURE_CORRUPT_COMPONENT=1
   if component_signature_control sign "$root/app" "$root/expected.json" 'Apple Development: Fixture'; then
     printf '%s\n' 'component entitlement drift was accepted' >&2; exit 1
@@ -912,7 +984,7 @@ PYCODE
     CANDIDATE_APP="$root/candidate.app"
     INSTALLED_APP="$root/app"
     mkdir -p "$CANDIDATE_APP"
-    cp "$INSTALLED_APP/Contents/MacOS/app" "$INSTALLED_APP/Contents/MacOS/Workbench"
+    ln -s app "$INSTALLED_APP/Contents/MacOS/Workbench"
     require_router_idle() { :; }
     verify_source_scope_and_hashes() { :; }
     revalidate_candidate_binding() { :; }
