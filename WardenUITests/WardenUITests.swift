@@ -329,11 +329,13 @@ final class WorkbenchUITests: XCTestCase {
         XCTAssertTrue(item.waitForExistence(timeout: 5), "no menu bar icon")
         item.click()
         // Titles come from MenuLayout.Slot (WorkbenchKit/Menu/MenuFeed.swift): Open, Settings…, Quit Workbench.
-        let open = app.menuItems["Open"]
+        // Query the status item's own menu: app.menuItems also matches the main menu's File > New Chat.
+        let menu = item.menus.firstMatch
+        let open = menu.menuItems["Open"]
         XCTAssertTrue(open.waitForExistence(timeout: 5), "menu bar menu missing Open")
-        XCTAssertTrue(app.menuItems["Settings…"].exists)
-        XCTAssertTrue(app.menuItems["Quit Workbench"].exists)
-        XCTAssertFalse(app.menuItems["New Chat"].exists, "New Chat is no longer in the menu bar menu")
+        XCTAssertTrue(menu.menuItems["Settings…"].exists)
+        XCTAssertTrue(menu.menuItems["Quit Workbench"].exists)
+        XCTAssertFalse(menu.menuItems["New Chat"].exists, "New Chat is no longer in the menu bar menu")
         open.click()
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 5), "Open did not bring up the main window")
     }

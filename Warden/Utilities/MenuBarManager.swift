@@ -209,7 +209,7 @@ final class MenuBarManager: NSObject, NSMenuDelegate {
             let updated = chat.updatedDate
             return MenuFeed.Chat(id: chat.id, title: chat.name, updatedAt: updated, busy: hub.busyChats[chat.id] != nil,
                                  unread: MenuFeed.isUnread(lastReplyAt: updated,
-                                                           lastViewedAt: hub.chatLastViewed(chat.id, updatedAt: updated)))
+                                                           lastViewedAt: hub.chatLastViewed(chat.id)))
         })
         if feed.items.isEmpty {
             menu.addItem(disabled("Nothing running"))

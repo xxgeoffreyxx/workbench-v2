@@ -79,25 +79,29 @@ final class WorkbenchHub: ObservableObject {
 
     private static let chatViewedKey = "workbench.chatLastViewed"
 
-    func markChatViewed(_ id: UUID, at date: Date = Date()) {
-        var viewed = UserDefaults.standard.dictionary(forKey: Self.chatViewedKey) as? [String: Double] ?? [:]
-        viewed[id.uuidString] = date.timeIntervalSince1970
-        UserDefaults.standard.set(viewed, forKey: Self.chatViewedKey)
-    }
+    private static let chatUnreadSinceKey = "workbench.chatUnreadSince"
 
-    /// When the chat was last looked at. Nothing before unread tracking started counts as new, so old chats never
-    /// light up. A chat the user has never opened falls back to that startup baseline; only markChatViewed (called
-    /// when the user actually views it) moves it, so a reply that lands before the first menu lookup stays unread.
-    func chatLastViewed(_ id: UUID, updatedAt: Date) -> Date {
+    /// Read state from UserDefaults. The baseline is set (once) to now the first time unread tracking runs.
+    private func chatReadState() -> ChatReadState {
         let defaults = UserDefaults.standard
-        let since = defaults.object(forKey: "workbench.chatUnreadSince") as? Double ?? {
+        let since = defaults.object(forKey: Self.chatUnreadSinceKey) as? Double ?? {
             let now = Date().timeIntervalSince1970
-            defaults.set(now, forKey: "workbench.chatUnreadSince")
+            defaults.set(now, forKey: Self.chatUnreadSinceKey)
             return now
         }()
-        let viewed = defaults.dictionary(forKey: Self.chatViewedKey) as? [String: Double] ?? [:]
-        guard let seconds = viewed[id.uuidString] else { return Date(timeIntervalSince1970: since) }
-        return Date(timeIntervalSince1970: max(seconds, since))
+        return ChatReadState(baseline: since,
+                             viewed: defaults.dictionary(forKey: Self.chatViewedKey) as? [String: Double] ?? [:])
+    }
+
+    func markChatViewed(_ id: UUID, at date: Date = Date()) {
+        var state = chatReadState()
+        state.markViewed(id.uuidString, at: date)
+        UserDefaults.standard.set(state.viewed, forKey: Self.chatViewedKey)
+    }
+
+    /// When the chat was last looked at (see ChatReadState). A lookup writes nothing; only markChatViewed moves it.
+    func chatLastViewed(_ id: UUID) -> Date {
+        chatReadState().lastViewed(id.uuidString)
     }
 
     // MARK: - Thermals
