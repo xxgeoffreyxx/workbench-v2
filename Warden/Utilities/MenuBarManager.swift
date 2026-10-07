@@ -206,10 +206,13 @@ final class MenuBarManager: NSObject, NSMenuDelegate {
     /// Replaces the old "N jobs running" line: what is running right now, and chats with a reply not yet read.
     private func addRunningItems(to menu: NSMenu, hub: WorkbenchHub) {
         let feed = MenuFeed.build(jobs: hub.jobs, chats: recentChats().map { chat in
-            let updated = chat.updatedDate
-            return MenuFeed.Chat(id: chat.id, title: chat.name, updatedAt: updated, busy: hub.busyChats[chat.id] != nil,
-                                 unread: MenuFeed.isUnread(lastReplyAt: updated,
-                                                           lastViewedAt: hub.chatLastViewed(chat.id, updatedAt: updated)))
+            // Unread is driven by the latest assistant reply only; updatedDate also moves on own sends and
+            // project/metadata edits. updatedDate still orders the list.
+            let lastReply = ChatReadState.lastAssistantReply(chat.messagesArray.map { ($0.timestamp, $0.own) })
+            return MenuFeed.Chat(id: chat.id, title: chat.name, updatedAt: chat.updatedDate,
+                                 busy: hub.busyChats[chat.id] != nil,
+                                 unread: MenuFeed.isUnread(lastReplyAt: lastReply,
+                                                           lastViewedAt: hub.chatLastViewed(chat.id)))
         })
         if feed.items.isEmpty {
             menu.addItem(disabled("Nothing running"))
@@ -328,7 +331,7 @@ final class MenuBarManager: NSObject, NSMenuDelegate {
 
     @objc private func openJobsTab() {
         WorkbenchWindows.showMain()
-        UserDefaults.standard.set(SidebarMode.jobs.rawValue, forKey: "workbench.sidebarMode")
+        TestIsolation.defaults().set(SidebarMode.jobs.rawValue, forKey: "workbench.sidebarMode")
     }
 
     @objc private func openQuickChat() {

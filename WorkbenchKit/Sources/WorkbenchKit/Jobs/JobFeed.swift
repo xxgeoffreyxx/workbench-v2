@@ -166,11 +166,12 @@ public enum JobFeed {
     static let fixtureTaskNames: Set<String> = ["pass-task", "reject-task", "error-task"]
     static let tempPrefixes = ["/var/folders/", "/private/var/folders/", "/tmp/", "/private/tmp/"]
 
-    /// Workflow plus task/run id, case-insensitive, so "scout:peer:adhoc-1" and "Scout:peer:adhoc-1" are one job.
-    static func dedupeKey(workflow: JobWorkflow, id: String, taskPath: String?) -> String {
+    /// Project, workflow and task/run id, case-insensitive, so "scout:peer:adhoc-1" and "Scout:peer:adhoc-1" are one
+    /// job but the same task id in Scout and ThriveOS stays two.
+    static func dedupeKey(workflow: JobWorkflow, project: String, id: String, taskPath: String?) -> String {
         let taskID = taskPath.map { URL(fileURLWithPath: $0).lastPathComponent }
             ?? id.split(separator: ":").last.map(String.init) ?? id
-        return "\(workflow.rawValue):\(taskID)".lowercased()
+        return "\(project):\(workflow.rawValue):\(taskID)".lowercased()
     }
 
     /// What a job's folder holds, for jobs that recorded no output: the files, and the tail of the newest log.
@@ -263,11 +264,11 @@ public enum JobFeed {
         for record in artifacts {
             recordsByID[record.id] = record
             artifactsByID[record.id] = record
-            idByKey[dedupeKey(workflow: record.workflow, id: record.id, taskPath: record.taskPath)] = record.id
+            idByKey[dedupeKey(workflow: record.workflow, project: record.project, id: record.id, taskPath: record.taskPath)] = record.id
         }
         for var event in events {
             if recordsByID[event.jobID] == nil,
-               let known = idByKey[dedupeKey(workflow: event.workflow, id: event.jobID, taskPath: event.taskPath)] {
+               let known = idByKey[dedupeKey(workflow: event.workflow, project: event.project, id: event.jobID, taskPath: event.taskPath)] {
                 event.jobID = known
             }
             let existing = recordsByID[event.jobID]

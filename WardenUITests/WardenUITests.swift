@@ -45,8 +45,10 @@ final class WorkbenchUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
         app = XCUIApplication()
-        app.launchArguments += ["-WorkbenchTestProjectFolder", Self.fixture]
+        // In-memory Core Data store and the "WorkbenchUITests" defaults suite: tests never touch real data.
+        app.launchArguments += ["-WorkbenchUITesting", "YES", "-WorkbenchTestProjectFolder", Self.fixture]
         app.launch()
+        app.activate()
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 15), "main window never appeared")
     }
 
@@ -325,11 +327,28 @@ final class WorkbenchUITests: XCTestCase {
     }
 
     func testMenuBarStatusItem() throws {
+        // Close the main window first, so Open has to bring it back rather than find it already there.
+        let main = app.windows.firstMatch
+        XCTAssertTrue(main.waitForExistence(timeout: 5), "main window missing before the test")
+        main.click()
+        app.typeKey("w", modifierFlags: .command)
+        let gone = NSPredicate(format: "exists == false")
+        let closed = expectation(for: gone, evaluatedWith: app.windows.firstMatch)
+        wait(for: [closed], timeout: 5)
+        XCTAssertEqual(app.windows.count, 0, "main window still open after Cmd-W")
+
         let item = app.menuBars.statusItems.firstMatch
         XCTAssertTrue(item.waitForExistence(timeout: 5), "no menu bar icon")
         item.click()
-        XCTAssertTrue(app.menuItems["Open Workbench"].waitForExistence(timeout: 5), "menu bar menu missing Open Workbench")
-        XCTAssertTrue(app.menuItems["New Chat"].exists)
-        app.typeKey(.escape, modifierFlags: [])
+        // Titles come from MenuLayout.Slot (WorkbenchKit/Menu/MenuFeed.swift): Open, Settings…, Quit Workbench.
+        // Query the status item's own menu: app.menuItems also matches the main menu's File > New Chat.
+        let menu = item.menus.firstMatch
+        let open = menu.menuItems["Open"]
+        XCTAssertTrue(open.waitForExistence(timeout: 5), "menu bar menu missing Open")
+        XCTAssertTrue(menu.menuItems["Settings…"].exists)
+        XCTAssertTrue(menu.menuItems["Quit Workbench"].exists)
+        XCTAssertFalse(menu.menuItems["New Chat"].exists, "New Chat is no longer in the menu bar menu")
+        open.click()
+        XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 5), "Open did not bring up the main window")
     }
 }

@@ -29,6 +29,9 @@ final class WorkbenchHub: ObservableObject {
     var viewingChatID: UUID? {
         didSet { if let viewingChatID { markChatViewed(viewingChatID) } }
     }
+    /// The main chat window, set by ContentView. Read live when a reply finishes, so a closed or minimized
+    /// window (or only Settings open) doesn't count as the chat being seen.
+    weak var mainChatWindow: NSWindow?
 
     /// Chats with a reply currently streaming, keyed by chat id.
     @Published private(set) var busyChats: [UUID: String] = [:]
@@ -41,6 +44,7 @@ final class WorkbenchHub: ObservableObject {
     var runningJobs: [JobRecord] { jobs.filter { $0.status == .running } }
 
     func start() {
+        ChatReadState.startup(defaults: TestIsolation.defaults())
         WorkbenchNotifier.shared.start()
         refreshJobs()
         refreshRouter()
@@ -67,7 +71,15 @@ final class WorkbenchHub: ObservableObject {
 
     func chatFinished(_ id: UUID, name: String, preview: String, failed: Bool = false) {
         busyChats.removeValue(forKey: id)
-        if viewingChatID == id, NSApp.isActive { markChatViewed(id) }
+        // viewingChatID is non-nil only while the Chats tab shows that chat.
+        let window = mainChatWindow
+        if ChatReadState.shouldMarkFinishedChatViewed(
+            finishedChat: id, isActive: NSApp.isActive,
+            windowVisible: (window?.isVisible ?? false) && !(window?.isMiniaturized ?? true),
+            chatsTabShown: viewingChatID != nil, selectedChat: viewingChatID
+        ) {
+            markChatViewed(id)
+        }
         refreshActivity()
         WorkbenchNotifier.shared.post(
             .replyFinished,
@@ -77,38 +89,34 @@ final class WorkbenchHub: ObservableObject {
         )
     }
 
-    private static let chatViewedKey = "workbench.chatLastViewed"
+    private static let chatViewedKey = ChatReadState.viewedKey
 
-    func markChatViewed(_ id: UUID, at date: Date = Date()) {
-        var viewed = UserDefaults.standard.dictionary(forKey: Self.chatViewedKey) as? [String: Double] ?? [:]
-        viewed[id.uuidString] = date.timeIntervalSince1970
-        UserDefaults.standard.set(viewed, forKey: Self.chatViewedKey)
+    /// Read state from UserDefaults; start() sets the baseline before any chat activity.
+    private func chatReadState() -> ChatReadState {
+        ChatReadState.load(defaults: TestIsolation.defaults())
     }
 
-    /// When the chat was last looked at. Nothing before unread tracking started counts as new, so old chats never
-    /// light up; the first time a chat is seen, its current state becomes the baseline.
-    func chatLastViewed(_ id: UUID, updatedAt: Date) -> Date {
-        let defaults = UserDefaults.standard
-        let since = defaults.object(forKey: "workbench.chatUnreadSince") as? Double ?? {
-            let now = Date().timeIntervalSince1970
-            defaults.set(now, forKey: "workbench.chatUnreadSince")
-            return now
-        }()
-        let viewed = defaults.dictionary(forKey: Self.chatViewedKey) as? [String: Double] ?? [:]
-        guard let seconds = viewed[id.uuidString] else {
-            markChatViewed(id, at: updatedAt)
-            return max(updatedAt, Date(timeIntervalSince1970: since))
-        }
-        return Date(timeIntervalSince1970: max(seconds, since))
+    func markChatViewed(_ id: UUID, at date: Date = Date()) {
+        var state = chatReadState()
+        state.markViewed(id.uuidString, at: date)
+        TestIsolation.defaults().set(state.viewed, forKey: Self.chatViewedKey)
+    }
+
+    /// When the chat was last looked at (see ChatReadState). A lookup writes nothing; only markChatViewed moves it.
+    func chatLastViewed(_ id: UUID) -> Date {
+        chatReadState().lastViewed(id.uuidString)
     }
 
     // MARK: - Thermals
 
+    /// Single-flight, deadline and failure backoff live in ThermalSampler; a tick it skips is simply dropped.
+    private let thermalSampler = ThermalSampler()
+
     func refreshThermals() {
-        Task.detached(priority: .utility) {
-            for host in HostThermals.hosts {
-                guard let sample = HostThermals.sample(host: host) else { continue }
-                await MainActor.run { WorkbenchHub.shared.thermals[host] = sample }
+        for host in HostThermals.hosts {
+            thermalSampler.tick(host: host) { sample in
+                guard let sample else { return }
+                Task { @MainActor in WorkbenchHub.shared.thermals[host] = sample }
             }
         }
     }

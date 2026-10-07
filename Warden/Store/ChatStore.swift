@@ -2,6 +2,7 @@ import CoreData
 import Foundation
 import SwiftUI
 import os
+import WorkbenchKit
 
 let migrationKey = "com.example.chatApp.migrationFromJSONCompleted"
 
@@ -163,7 +164,7 @@ final class ChatStore: ObservableObject {
     }
     
     private func getDefaultAPIService() -> APIServiceEntity? {
-        guard let defaultServiceIDString = UserDefaults.standard.string(forKey: "defaultApiService"),
+        guard let defaultServiceIDString = TestIsolation.defaults().string(forKey: "defaultApiService"),
               let url = URL(string: defaultServiceIDString),
               let objectID = self.viewContext.persistentStoreCoordinator?.managedObjectID(forURIRepresentation: url)
         else { return nil }
@@ -329,7 +330,7 @@ final class ChatStore: ObservableObject {
     }
 
     private func migrateFromJSONIfNeeded() {
-        guard !UserDefaults.standard.bool(forKey: migrationKey) else { return }
+        guard !TestIsolation.defaults().bool(forKey: migrationKey) else { return }
 
         do {
             let fileURL = try ChatStore.fileURL()
@@ -348,11 +349,11 @@ final class ChatStore: ObservableObject {
                     #endif
                 }
                 
-                UserDefaults.standard.set(true, forKey: migrationKey)
+                TestIsolation.defaults().set(true, forKey: migrationKey)
                 try? FileManager.default.removeItem(at: fileURL)
             }
         } catch {
-            UserDefaults.standard.set(true, forKey: migrationKey)
+            TestIsolation.defaults().set(true, forKey: migrationKey)
             WardenLog.coreData.error("Error migrating chats: \(error.localizedDescription, privacy: .public)")
         }
     }

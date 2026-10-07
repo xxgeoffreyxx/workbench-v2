@@ -2,7 +2,7 @@ import XCTest
 @testable import Warden
 
 final class ReasoningEffortIntegrationTests: XCTestCase {
-    func testChatGPTHandlerIncludesReasoningEffortForReasoningModels() throws {
+    func testChatGPTHandlerIncludesReasoningEffortForReasoningModels() async throws {
         let config = APIServiceConfig(
             name: "chatgpt",
             apiUrl: URL(string: "https://example.com/v1/chat/completions")!,
@@ -11,11 +11,12 @@ final class ReasoningEffortIntegrationTests: XCTestCase {
         )
 
         let handler = ChatGPTHandler(config: config, session: .shared, streamingSession: .shared)
-        let request = try handler.prepareRequest(
+        let request = try await handler.prepareRequest(
             requestMessages: [["role": "user", "content": "hi"]],
             tools: nil,
             model: config.model,
             settings: GenerationSettings(temperature: 0.2, reasoningEffort: .extraHigh),
+            attachmentPolicy: .preferProviderAttachments,
             stream: false
         )
 
@@ -24,7 +25,7 @@ final class ReasoningEffortIntegrationTests: XCTestCase {
         XCTAssertEqual(json["reasoning_effort"] as? String, "xhigh")
     }
 
-    func testOpenRouterHandlerIncludesIncludeReasoningAndReasoningEffortWhenEnabled() throws {
+    func testOpenRouterHandlerIncludesIncludeReasoningAndReasoningEffortWhenEnabled() async throws {
         let config = APIServiceConfig(
             name: "openrouter",
             apiUrl: URL(string: "https://example.com/api/v1/chat/completions")!,
@@ -33,11 +34,12 @@ final class ReasoningEffortIntegrationTests: XCTestCase {
         )
 
         let handler = OpenRouterHandler(config: config, session: .shared, streamingSession: .shared)
-        let request = try handler.prepareRequest(
+        let request = try await handler.prepareRequest(
             requestMessages: [["role": "user", "content": "hi"]],
             tools: nil,
             model: config.model,
             settings: GenerationSettings(temperature: 0.2, reasoningEffort: .low),
+            attachmentPolicy: .preferProviderAttachments,
             stream: false
         )
 
@@ -47,7 +49,7 @@ final class ReasoningEffortIntegrationTests: XCTestCase {
         XCTAssertEqual(json["include_reasoning"] as? Bool, true)
     }
 
-    func testClaudeHandlerAddsThinkingConfigWhenEnabled() throws {
+    func testClaudeHandlerAddsThinkingConfigWhenEnabled() async throws {
         let config = APIServiceConfig(
             name: "claude",
             apiUrl: URL(string: "https://example.com/v1/messages")!,
@@ -56,11 +58,12 @@ final class ReasoningEffortIntegrationTests: XCTestCase {
         )
 
         let handler = ClaudeHandler(config: config, session: .shared, streamingSession: .shared)
-        let request = try handler.prepareRequest(
+        let request = try await handler.prepareRequest(
             requestMessages: [["role": "user", "content": "hi"]],
             tools: nil,
             model: config.model,
             settings: GenerationSettings(temperature: 0.2, reasoningEffort: .high),
+            attachmentPolicy: .preferProviderAttachments,
             stream: false
         )
 
