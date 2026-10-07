@@ -262,13 +262,26 @@ sign_candidate() {
   printf '%s\n' "$staged" >"$EVIDENCE_DIR/signed-candidate-path.txt"
 }
 
-restore_backup() {
+restore_backup_files() {
   local backup="$1"
   if [[ -d "$backup" ]]; then
     rm -rf "$INSTALLED_APP"
     ditto "$backup" "$INSTALLED_APP" || true
-    /usr/bin/open -a Workbench >/dev/null 2>&1 || true
   fi
+}
+
+reopen_workbench() {
+  if [[ -n "${WORKBENCH_OWNER_OPEN_STUB:-}" ]]; then
+    printf '%s\n' "open -a Workbench" >>"$WORKBENCH_OWNER_OPEN_STUB"
+    return 0
+  fi
+  /usr/bin/open -a Workbench >/dev/null 2>&1 || true
+}
+
+restore_backup_and_reopen() {
+  local backup="$1"
+  restore_backup_files "$backup"
+  reopen_workbench
 }
 
 run_deploy() {
@@ -291,19 +304,19 @@ run_deploy() {
   shasum -a 256 "$backup/Contents/MacOS/Workbench" "$backup/Contents/Info.plist" "$backup/Contents/_CodeSignature/CodeResources" >"$EVIDENCE_DIR/backup-sha256.txt"
   rm -rf "$INSTALLED_APP"
   if ! ditto "$staged" "$INSTALLED_APP" >"$LOG_DIR/install-candidate.stdout.log" 2>"$LOG_DIR/install-candidate.stderr.log"; then
-    restore_backup "$backup"
+    restore_backup_and_reopen "$backup"
     exit 1
   fi
   if ! require_bundle_identity "$INSTALLED_APP" installed-after || ! require_signature "$INSTALLED_APP" installed-after; then
-    restore_backup "$backup"
+    restore_backup_and_reopen "$backup"
     exit 1
   fi
   verify_installed_matches_signed_candidate "$staged" || {
-    restore_backup "$backup"
+    restore_backup_and_reopen "$backup"
     exit 1
   }
   if ! /usr/bin/open -a Workbench >"$LOG_DIR/reopen-workbench.stdout.log" 2>"$LOG_DIR/reopen-workbench.stderr.log"; then
-    restore_backup "$backup"
+    restore_backup_and_reopen "$backup"
     exit 1
   fi
   for _ in $(seq 1 30); do
@@ -313,7 +326,7 @@ run_deploy() {
     fi
     sleep 1
   done
-  restore_backup "$backup"
+  restore_backup_and_reopen "$backup"
   printf '%s\n' "Workbench did not reopen from installed app; backup restored" >&2
   exit 1
 }
@@ -501,9 +514,14 @@ run_test_rollback() {
   INSTALLED_APP="$installed"
   rm -rf "$INSTALLED_APP"
   ditto "$bad" "$INSTALLED_APP"
+  local open_stub="$root/open-stub.log"
+  WORKBENCH_OWNER_OPEN_STUB="$open_stub"
   if ! require_bundle_identity "$INSTALLED_APP" installed-after; then
-    restore_backup "$backup"
+    restore_backup_files "$backup"
   fi
+  [[ ! -e "$open_stub" ]] || { printf '%s\n' "fixture pure restore unexpectedly reopened Workbench" >&2; exit 1; }
+  restore_backup_and_reopen "$backup"
+  grep -F "open -a Workbench" "$open_stub" >/dev/null
   cmp "$backup/Contents/MacOS/Workbench" "$INSTALLED_APP/Contents/MacOS/Workbench" >"$root/cmp.log"
   printf '%s\n' "rollback fixture passed" >"$root/result.txt"
 }
