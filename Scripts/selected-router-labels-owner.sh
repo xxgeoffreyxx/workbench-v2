@@ -553,7 +553,16 @@ run_test_router_labels() {
     printf '%s\n' "usage: $0 test-router-labels WORKBENCH-SELECTED-NAMES" >&2
     exit 2
   }
-  log_run router-labels-swift-test /usr/bin/swift test --package-path "$SOURCE_DIR/WorkbenchKit"
+  local verifier="$BUILD_DIR/router-labels-verify.sh"
+  cat >"$verifier" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "${1:-}" == "WORKBENCH-SELECTED-NAMES" ]] || exit 2
+/usr/bin/swift test --package-path "$2/WorkbenchKit"
+SH
+  chmod +x "$verifier"
+  printf '%s\n' "bash $verifier WORKBENCH-SELECTED-NAMES $SOURCE_DIR" >"$LOG_DIR/router-labels-swift-test.command.txt"
+  bash "$verifier" WORKBENCH-SELECTED-NAMES "$SOURCE_DIR" >"$LOG_DIR/router-labels-swift-test.stdout.log" 2>"$LOG_DIR/router-labels-swift-test.stderr.log"
 }
 
 write_sha256() {
