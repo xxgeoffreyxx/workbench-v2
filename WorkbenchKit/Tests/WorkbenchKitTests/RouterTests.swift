@@ -28,11 +28,52 @@ final class RouterTests: XCTestCase {
     }
 
     func testResidentModelsFromHealth() throws {
-        let json = #"{"ok":true,"models":{"hosaka-helga":{"host":"m1max","ready":false},"ornith":{"host":"m1max","ready":true},"qwen30":{"ready":true}}}"#
+        let json = """
+            {
+              "ok": true,
+              "models": {
+                "hosaka-helga": { "host": "m1max", "ready": false },
+                "ornith": { "host": "m1max", "ready": true, "label": "Qwen3.5-9B Q6 (M1 Max)" },
+                "qwen30": { "ready": true }
+              }
+            }
+            """
         let health = try JSONDecoder().decode(RouterHealthResponse.self, from: Data(json.utf8))
         let resident = ModelCatalog.residentModels(from: health.models)
-        XCTAssertEqual(resident, [ResidentModel(canonical: "ornith", title: "Ornith (Helga)", host: "m1max", ready: true)])
+        XCTAssertEqual(resident, [ResidentModel(canonical: "ornith", title: "Qwen3.5-9B Q6 (M1 Max)", host: "m1max", ready: true)])
         XCTAssertEqual(ModelCatalog.readinessByCanonicalModel(from: health.models), ["ornith": true])
+    }
+
+    func testRouterLabelsOverrideCanonicalDisplayTitles() throws {
+        let json = """
+            {
+              "ok": true,
+              "models": {
+                "qwen27": {
+                  "host": "m2max",
+                  "network_label": "Thunderbolt",
+                  "model": "Qwen3.8-27B-4bit",
+                  "label": "Qwen3.8-27B Q4 (M2 Max)",
+                  "ready": true
+                },
+                "ornith": {
+                  "host": "m1max",
+                  "model": "Qwen3.5-9B-6bit",
+                  "label": "   ",
+                  "ready": true
+                }
+              }
+            }
+            """
+        let health = try JSONDecoder().decode(RouterHealthResponse.self, from: Data(json.utf8))
+
+        let models = ModelCatalog.models(from: health)
+        XCTAssertEqual(models.first { $0.modelID == "qwen27" }?.title, "Qwen3.8-27B Q4 (M2 Max)")
+        XCTAssertEqual(models.first { $0.modelID == "ornith" }?.title, "Ornith (Helga)")
+
+        let resident = ModelCatalog.residentModels(from: health.models)
+        XCTAssertEqual(resident.first { $0.canonical == "qwen27" }?.title, "Qwen3.8-27B Q4 (M2 Max)")
+        XCTAssertEqual(resident.first { $0.canonical == "ornith" }?.title, "Ornith (Helga)")
     }
 
     func testDorsettSummary() {

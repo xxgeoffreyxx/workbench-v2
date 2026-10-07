@@ -20,6 +20,7 @@ public struct RouterHealthResponse: Decodable, Sendable {
         public let host: String?
         public let network: String?
         public let network_label: String?
+        public let label: String?
         public let model: String?
         public let aliases: [String]?
         public let ready: Bool
@@ -135,14 +136,19 @@ public enum ModelCatalog {
                 continue
             }
             let subtitleNetwork = status.network_label ?? status.network ?? "Router"
+            let title = preferredRouterDisplayTitle(
+                for: canonical,
+                existingTitle: optionsByID[canonical]?.title,
+                label: status.label
+            )
             optionsByID[canonical] = RouterModel(
                 id: "http://127.0.0.1:8110/v1#\(canonical)",
                 modelID: canonical,
-                title: displayTitle(for: canonical),
+                title: title,
                 subtitle: "Router · \(status.host ?? "local") · \(subtitleNetwork)\(status.ready ? "" : " · offline")",
                 role: status.model ?? canonical,
                 baseURL: "http://127.0.0.1:8110/v1",
-                ready: status.ready
+                ready: status.ready || (optionsByID[canonical]?.ready ?? false)
             )
 
             if !status.ready,
@@ -152,7 +158,7 @@ public enum ModelCatalog {
                 optionsByID["\(canonical)-cloud"] = RouterModel(
                     id: "http://127.0.0.1:8110/v1#\(canonical)-cloud",
                     modelID: canonical,
-                    title: "Alibaba \(displayTitle(for: canonical))",
+                    title: "Alibaba \(title)",
                     subtitle: "\(status.cloud_fallback?.provider ?? "Alibaba Cloud") · fallback online",
                     role: cloudModel,
                     baseURL: "http://127.0.0.1:8110/v1",
@@ -179,7 +185,12 @@ public enum ModelCatalog {
         for (routerID, status) in routerModels ?? [:] {
             guard let canonical = canonicalWorkbenchModelID(for: routerID, backend: status.model ?? routerID) else { continue }
             let ready = (byCanonical[canonical]?.ready ?? false) || status.ready
-            byCanonical[canonical] = ResidentModel(canonical: canonical, title: displayTitle(for: canonical), host: status.host ?? "local", ready: ready)
+            byCanonical[canonical] = ResidentModel(
+                canonical: canonical,
+                title: preferredRouterDisplayTitle(for: canonical, existingTitle: byCanonical[canonical]?.title, label: status.label),
+                host: status.host ?? "local",
+                ready: ready
+            )
         }
         return byCanonical.values.sorted {
             let l = modelSortRank($0.canonical), r = modelSortRank($1.canonical)
@@ -311,6 +322,21 @@ public enum ModelCatalog {
         default:
             return modelID
         }
+    }
+
+    public static func routerDisplayTitle(for modelID: String, label: String?) -> String {
+        if let cleanLabel = label?.trimmingCharacters(in: .whitespacesAndNewlines), !cleanLabel.isEmpty {
+            return cleanLabel
+        }
+        return displayTitle(for: modelID)
+    }
+
+    public static func preferredRouterDisplayTitle(for modelID: String, existingTitle: String?, label: String?) -> String {
+        let fallback = displayTitle(for: modelID)
+        let incoming = routerDisplayTitle(for: modelID, label: label)
+        if incoming != fallback { return incoming }
+        if let existingTitle, existingTitle != fallback { return existingTitle }
+        return incoming
     }
 
     public static func alibabaModelOptions() -> [RouterModel] {

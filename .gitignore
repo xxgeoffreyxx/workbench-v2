@@ -96,6 +96,7 @@ coverage/
 build.log
 Swift Best Practices Skill.md
 skills/
+!WorkbenchKit/Sources/WorkbenchKit/Skills/
 utlitlies_plan.md
 UI_plan.md
 .tmp/
