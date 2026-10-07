@@ -29,6 +29,9 @@ struct ChatView: View {
     @State private var pendingCodeBlocks = 0
     @State private var userIsScrolling = false
     @State private var scrollDebounceWorkItem: DispatchWorkItem?
+    /// False once the message list leaves the screen. ScrollViewProxy.scrollTo traps if it runs after its ScrollView
+    /// is gone (tab switch to Jobs, chat change), so every scroll checks this first.
+    @State private var messageListOnScreen = false
     
     @State private var messageBeingEdited: MessageEntity?
     @State private var editMessageDraft: String = ""
@@ -298,6 +301,7 @@ struct ChatView: View {
                         .padding(.top, 20)
                         .padding(.bottom, 40) // Increased bottom padding for floating input
                         .onAppear {
+                            messageListOnScreen = true
                             pendingCodeBlocks = chatViewModel.sortedMessages.reduce(0) { count, message in
                                 count + (message.body.components(separatedBy: "```").count - 1) / 2
                             }
@@ -309,6 +313,11 @@ struct ChatView: View {
                             if pendingCodeBlocks == 0 {
                                 codeBlocksRendered = true
                             }
+                        }
+                        .onDisappear {
+                            messageListOnScreen = false
+                            scrollDebounceWorkItem?.cancel()
+                            scrollDebounceWorkItem = nil
                         }
                         .onSwipe { event in
                             switch event.direction {
@@ -329,6 +338,7 @@ struct ChatView: View {
                                 scrollDebounceWorkItem?.cancel()
 
                                 let workItem = DispatchWorkItem {
+                                    guard messageListOnScreen else { return }
                                     if let lastMessage = chatViewModel.sortedMessages.last {
                                         withAnimation(.easeOut(duration: 1)) {
                                             scrollView.scrollTo(lastMessage.id, anchor: .bottom)
@@ -341,19 +351,19 @@ struct ChatView: View {
                             }
                         }
                         .onReceive([chat.messages.count].publisher) { newCount in
-                            DispatchQueue.main.async {
-                                if waitingForResponse || currentError != nil {
-                                    withAnimation {
-                                        scrollView.scrollTo(-1)
-                                    }
+                            // Synchronous on purpose: a deferred scroll can land after the list is torn down and trap.
+                            guard messageListOnScreen else { return }
+                            if waitingForResponse || currentError != nil {
+                                withAnimation {
+                                    scrollView.scrollTo(-1)
                                 }
-                                else if newCount > self.messageCount {
-                                    self.messageCount = newCount
+                            }
+                            else if newCount > self.messageCount {
+                                self.messageCount = newCount
 
-                                    let sortedMessages = chatViewModel.sortedMessages
-                                    if let lastMessage = sortedMessages.last {
-                                        scrollView.scrollTo(lastMessage.id, anchor: .bottom)
-                                    }
+                                let sortedMessages = chatViewModel.sortedMessages
+                                if let lastMessage = sortedMessages.last {
+                                    scrollView.scrollTo(lastMessage.id, anchor: .bottom)
                                 }
                             }
                         }
@@ -363,7 +373,7 @@ struct ChatView: View {
                                 pendingCodeBlocks -= 1
                                 if pendingCodeBlocks == 0 {
                                     codeBlocksRendered = true
-                                    if let lastMessage = chatViewModel.sortedMessages.last {
+                                    if messageListOnScreen, let lastMessage = chatViewModel.sortedMessages.last {
                                         scrollView.scrollTo(lastMessage.id, anchor: .bottom)
                                     }
                                 }

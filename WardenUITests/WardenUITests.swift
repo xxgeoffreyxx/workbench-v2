@@ -279,6 +279,21 @@ final class WorkbenchUITests: XCTestCase {
         app.radioButtons["Chats"].click()
     }
 
+    /// Regression: a deferred ScrollViewProxy.scrollTo ran after the chat list was torn down by a tab switch and
+    /// trapped (EXC_BREAKPOINT in ChatView). Switching between a chat and Jobs must never crash the app.
+    func testSwitchingChatAndJobsTabsDoesNotCrash() throws {
+        let firstChat = app.outlines["Sidebar"].cells.firstMatch
+        if firstChat.waitForExistence(timeout: 10) { firstChat.click() }
+        for _ in 0..<8 {
+            app.radioButtons["Jobs"].click()
+            usleep(150_000)
+            app.radioButtons["Chats"].click()
+            usleep(150_000)
+        }
+        sleep(2)
+        XCTAssertEqual(app.state, .runningForeground, "app died while switching between Chats and Jobs")
+    }
+
     func openSettings(_ tab: String) {
         app.typeKey(",", modifierFlags: .command)
         let row = app.staticTexts[tab].firstMatch
