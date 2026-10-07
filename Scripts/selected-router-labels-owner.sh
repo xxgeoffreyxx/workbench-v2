@@ -26,7 +26,7 @@ EXPECTED_TEAM_ID="45CY38F39L"
 mkdir -p "$LOG_DIR" "$BUILD_DIR" "$BACKUP_DIR" "$PRODUCTION_DIR"
 
 usage() {
-  printf '%s\n' "usage: $0 inspect|localhost|deploy|production|test-clean-scope|test-rollback|test-signed-binding|test-router-labels|test-component-entitlements|sha256"
+  printf '%s\n' "usage: $0 inspect|localhost|deploy|production|test-clean-scope|test-rollback|test-signed-binding|test-router-labels|test-component-entitlements|test-acceptance-required|sha256"
 }
 
 stamp() {
