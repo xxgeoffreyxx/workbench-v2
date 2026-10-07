@@ -29,6 +29,9 @@ final class WorkbenchHub: ObservableObject {
     var viewingChatID: UUID? {
         didSet { if let viewingChatID { markChatViewed(viewingChatID) } }
     }
+    /// The main chat window, set by ContentView. Read live when a reply finishes, so a closed or minimized
+    /// window (or only Settings open) doesn't count as the chat being seen.
+    weak var mainChatWindow: NSWindow?
 
     /// Chats with a reply currently streaming, keyed by chat id.
     @Published private(set) var busyChats: [UUID: String] = [:]
@@ -68,7 +71,15 @@ final class WorkbenchHub: ObservableObject {
 
     func chatFinished(_ id: UUID, name: String, preview: String, failed: Bool = false) {
         busyChats.removeValue(forKey: id)
-        if viewingChatID == id, NSApp.isActive { markChatViewed(id) }
+        // viewingChatID is non-nil only while the Chats tab shows that chat.
+        let window = mainChatWindow
+        if ChatReadState.shouldMarkFinishedChatViewed(
+            finishedChat: id, isActive: NSApp.isActive,
+            windowVisible: (window?.isVisible ?? false) && !(window?.isMiniaturized ?? true),
+            chatsTabShown: viewingChatID != nil, selectedChat: viewingChatID
+        ) {
+            markChatViewed(id)
+        }
         refreshActivity()
         WorkbenchNotifier.shared.post(
             .replyFinished,

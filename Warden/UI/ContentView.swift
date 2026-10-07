@@ -160,6 +160,9 @@ struct ContentView: View {
             setupSelectedChatChange(oldValue: oldValue, newValue: newValue)
             hub.viewingChatID = sidebarMode == .chats ? newValue?.id : nil
         }
+        .onChange(of: window) { _, newWindow in
+            hub.mainChatWindow = newWindow
+        }
         .onChange(of: sidebarMode) { _, mode in
             hub.viewingChatID = mode == .chats ? selectedChat?.id : nil
         }

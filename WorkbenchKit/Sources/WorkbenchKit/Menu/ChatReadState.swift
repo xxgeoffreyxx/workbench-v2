@@ -44,6 +44,15 @@ public struct ChatReadState: Equatable {
         return selectedChat
     }
 
+    /// When a reply finishes: mark it read only if that exact chat is on screen right now (app active, main
+    /// window visible and not minimized, Chats tab shown). Same rule as activation.
+    public static func shouldMarkFinishedChatViewed<ID: Equatable>(
+        finishedChat: ID, isActive: Bool, windowVisible: Bool, chatsTabShown: Bool, selectedChat: ID?
+    ) -> Bool {
+        chatToMarkOnActivation(isActive: isActive, windowVisible: windowVisible,
+                               chatsTabShown: chatsTabShown, selectedChat: selectedChat) == finishedChat
+    }
+
     // MARK: - Persistence
 
     public static let baselineKey = "workbench.chatUnreadSince"

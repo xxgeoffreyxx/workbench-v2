@@ -123,4 +123,24 @@ final class ChatReadStateTests: XCTestCase {
             }
         }
     }
+
+    // A reply that finishes is read only if the user can actually see that chat.
+    private func finished(_ finished: String = "a", active: Bool = true, visible: Bool = true,
+                          chats: Bool = true, selected: String? = "a") -> Bool {
+        ChatReadState.shouldMarkFinishedChatViewed(
+            finishedChat: finished, isActive: active, windowVisible: visible,
+            chatsTabShown: chats, selectedChat: selected)
+    }
+
+    func testFinishedReplyWindowClosedNotMarked() { XCTAssertFalse(finished(visible: false)) }
+    func testFinishedReplyWindowMinimizedNotMarked() {
+        let isVisible = true, isMiniaturized = true
+        XCTAssertFalse(finished(visible: isVisible && !isMiniaturized))
+    }
+    func testFinishedReplySettingsOnlyActiveNotMarked() { XCTAssertFalse(finished(active: true, visible: false)) }
+    func testFinishedReplyAppInactiveNotMarked() { XCTAssertFalse(finished(active: false)) }
+    func testFinishedReplyJobsTabNotMarked() { XCTAssertFalse(finished(chats: false)) }
+    func testFinishedReplyDifferentChatNotMarked() { XCTAssertFalse(finished(selected: "b")) }
+    func testFinishedReplyNoChatSelectedNotMarked() { XCTAssertFalse(finished(selected: nil)) }
+    func testFinishedReplyAllConditionsMarked() { XCTAssertTrue(finished()) }
 }
