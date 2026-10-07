@@ -214,6 +214,13 @@ same_start() {
   [[ "$(printf '%s' "$1" | tr -s ' ' | sed 's/^ //;s/ $//')" == "$(printf '%s' "$2" | tr -s ' ' | sed 's/^ //;s/ $//')" ]]
 }
 
+# True while PID still names the process that started at START (empty ps = gone).
+process_still_same() {
+  local now
+  now="$(ps -p "$1" -o lstart= 2>/dev/null)"
+  [[ -n "$now" ]] && same_start "$now" "$2"
+}
+
 observe_running_app() {
   ps -axo pid,lstart,comm,args | grep -F "$INSTALLED_APP/Contents/MacOS/Workbench" | grep -v grep || true
 }
@@ -231,10 +238,10 @@ quit_exact_current_app_if_running() {
   line="$(cat "$observed")"
   read -r pid dow mon day tod year _ <<<"$line"
   start="$dow $mon $day $tod $year"
-  same_start "$(ps -p "$pid" -o lstart=)" "$start" || { printf '%s\n' "Workbench PID/start changed before quit" >&2; exit 1; }
+  process_still_same "$pid" "$start" || { printf '%s\n' "Workbench PID/start changed before quit" >&2; exit 1; }
   /usr/bin/osascript -e 'tell application id "me.mccaleb.Workbench" to quit' >"$LOG_DIR/quit-workbench.stdout.log" 2>"$LOG_DIR/quit-workbench.stderr.log" || true
   for _ in $(seq 1 30); do
-    if ! ps -p "$pid" -o lstart= 2>/dev/null | grep -F "$start" >/dev/null; then
+    if ! process_still_same "$pid" "$start"; then
       return 0
     fi
     sleep 1
@@ -1056,6 +1063,9 @@ run_test_same_start() {
   same_start "Tue Oct  6 13:00:25 2026" "Tue Oct 6 13:00:25 2026" || { printf '%s\n' "padded single-digit day did not match" >&2; exit 1; }
   same_start "Tue Oct 16 13:00:25 2026" "Tue Oct 16 13:00:25 2026" || { printf '%s\n' "two-digit day did not match" >&2; exit 1; }
   if same_start "Tue Oct  6 13:00:26 2026" "Tue Oct 6 13:00:25 2026"; then printf '%s\n' "different start matched" >&2; exit 1; fi
+  ( ps() { printf '%s\n' "Tue Oct  6 13:00:25 2026"; }
+    process_still_same 30694 "Tue Oct 6 13:00:25 2026" ) || { printf '%s\n' "padded-day live process read as gone" >&2; exit 1; }
+  if ( ps() { :; }; process_still_same 30694 "Tue Oct 6 13:00:25 2026" ); then printf '%s\n' "exited process read as alive" >&2; exit 1; fi
   printf '%s\n' "start-time comparison: PASS"
 }
 
