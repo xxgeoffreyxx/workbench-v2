@@ -26,7 +26,7 @@ EXPECTED_TEAM_ID="45CY38F39L"
 mkdir -p "$LOG_DIR" "$BUILD_DIR" "$BACKUP_DIR" "$PRODUCTION_DIR"
 
 usage() {
-  printf '%s\n' "usage: $0 inspect|localhost|deploy|production|test-clean-scope|test-rollback|test-signed-binding|test-router-labels|test-component-entitlements|test-acceptance-required|sha256"
+  printf '%s\n' "usage: $0 inspect|localhost|deploy|production|test-clean-scope|test-rollback|test-signed-binding|test-router-labels|test-component-entitlements|test-acceptance-required|test-same-start|sha256"
 }
 
 stamp() {
@@ -209,6 +209,11 @@ if sys.argv[2]:
 PY
 }
 
+# ps pads single-digit days ("Oct  6"); compare start times with whitespace collapsed.
+same_start() {
+  [[ "$(printf '%s' "$1" | tr -s ' ' | sed 's/^ //;s/ $//')" == "$(printf '%s' "$2" | tr -s ' ' | sed 's/^ //;s/ $//')" ]]
+}
+
 observe_running_app() {
   ps -axo pid,lstart,comm,args | grep -F "$INSTALLED_APP/Contents/MacOS/Workbench" | grep -v grep || true
 }
@@ -226,7 +231,7 @@ quit_exact_current_app_if_running() {
   line="$(cat "$observed")"
   read -r pid dow mon day tod year _ <<<"$line"
   start="$dow $mon $day $tod $year"
-  ps -p "$pid" -o lstart= | grep -F "$start" >/dev/null || { printf '%s\n' "Workbench PID/start changed before quit" >&2; exit 1; }
+  same_start "$(ps -p "$pid" -o lstart=)" "$start" || { printf '%s\n' "Workbench PID/start changed before quit" >&2; exit 1; }
   /usr/bin/osascript -e 'tell application id "me.mccaleb.Workbench" to quit' >"$LOG_DIR/quit-workbench.stdout.log" 2>"$LOG_DIR/quit-workbench.stderr.log" || true
   for _ in $(seq 1 30); do
     if ! ps -p "$pid" -o lstart= 2>/dev/null | grep -F "$start" >/dev/null; then
@@ -1047,6 +1052,13 @@ SH
   cat "$LOG_DIR/router-labels-swift-test.stderr.log" >&2
 }
 
+run_test_same_start() {
+  same_start "Tue Oct  6 13:00:25 2026" "Tue Oct 6 13:00:25 2026" || { printf '%s\n' "padded single-digit day did not match" >&2; exit 1; }
+  same_start "Tue Oct 16 13:00:25 2026" "Tue Oct 16 13:00:25 2026" || { printf '%s\n' "two-digit day did not match" >&2; exit 1; }
+  if same_start "Tue Oct  6 13:00:26 2026" "Tue Oct 6 13:00:25 2026"; then printf '%s\n' "different start matched" >&2; exit 1; fi
+  printf '%s\n' "start-time comparison: PASS"
+}
+
 run_test_acceptance_required() {
   local phase out
   for phase in localhost deploy production; do
@@ -1083,6 +1095,7 @@ case "${1:-}" in
   test-signed-binding) run_test_signed_binding ;;
   test-component-entitlements) run_test_component_entitlements ;;
   test-acceptance-required) run_test_acceptance_required ;;
+  test-same-start) run_test_same_start ;;
   test-router-labels) shift; run_test_router_labels "$@" ;;
   sha256) write_sha256 ;;
   *) usage; exit 2 ;;
