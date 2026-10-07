@@ -76,6 +76,21 @@ final class RouterTests: XCTestCase {
         XCTAssertEqual(resident.first { $0.canonical == "ornith" }?.title, "Ornith (Helga)")
     }
 
+    func testReadyCanonicalMetadataSurvivesOfflineAliases() throws {
+        var rows: [String: Any] = ["ornith": ["host": "m1max", "model": "Qwen3.5-9B-6bit", "network_label": "Thunderbolt", "label": "Qwen3.5-9B Q6 (M1 Max)", "ready": true]]
+        rows["hosaka-helga"] = ["host": "stale-host", "model": "ornith-stale", "network_label": "Offline network", "label": "Stale alias", "ready": false]
+        // Many aliases exercise dictionary-order independence without depending on a hash seed.
+        for i in 0..<32 { rows["legacy-\(i)"] = ["host": "stale-host", "model": "ornith-stale", "ready": false] }
+        let data = try JSONSerialization.data(withJSONObject: ["ok": true, "models": rows])
+        let health = try JSONDecoder().decode(RouterHealthResponse.self, from: data)
+        let model = try XCTUnwrap(ModelCatalog.models(from: health).first { $0.modelID == "ornith" })
+        XCTAssertTrue(model.ready)
+        XCTAssertEqual(model.title, "Qwen3.5-9B Q6 (M1 Max)")
+        XCTAssertEqual(model.subtitle, "Router · m1max · Thunderbolt")
+        XCTAssertEqual(model.role, "Qwen3.5-9B-6bit")
+        XCTAssertEqual(ModelCatalog.residentModels(from: health.models), [ResidentModel(canonical: "ornith", title: "Qwen3.5-9B Q6 (M1 Max)", host: "m1max", ready: true)])
+    }
+
     func testDorsettSummary() {
         let parsed = Dorsett.summary(from: #"{"summary":"Good fit {really}","score":8} trailing"#)
         XCTAssertEqual(parsed?.summary, "Good fit {really}")

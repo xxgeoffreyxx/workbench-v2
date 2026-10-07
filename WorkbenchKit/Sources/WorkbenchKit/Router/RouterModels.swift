@@ -131,17 +131,18 @@ public enum ModelCatalog {
         let showCloudFallbacks = cloudEnabled && !thunderboltLinked && (!onHomeLocal || localCloudApproved)
 
         var optionsByID: [String: RouterModel] = [:]
-        for (routerID, status) in routerModels {
+        for (routerID, status) in preferredRouterRows(routerModels) {
             guard let canonical = canonicalWorkbenchModelID(for: routerID, backend: status.model ?? routerID) else {
                 continue
             }
             let subtitleNetwork = status.network_label ?? status.network ?? "Router"
-            let title = preferredRouterDisplayTitle(
+            let title = optionsByID[canonical]?.title ?? preferredRouterDisplayTitle(
                 for: canonical,
                 existingTitle: optionsByID[canonical]?.title,
                 label: status.label
             )
-            optionsByID[canonical] = RouterModel(
+            if optionsByID[canonical] == nil {
+                optionsByID[canonical] = RouterModel(
                 id: "http://127.0.0.1:8110/v1#\(canonical)",
                 modelID: canonical,
                 title: title,
@@ -149,7 +150,8 @@ public enum ModelCatalog {
                 role: status.model ?? canonical,
                 baseURL: "http://127.0.0.1:8110/v1",
                 ready: status.ready || (optionsByID[canonical]?.ready ?? false)
-            )
+                )
+            }
 
             if !status.ready,
                showCloudFallbacks,
@@ -182,8 +184,9 @@ public enum ModelCatalog {
 
     public static func residentModels(from routerModels: [String: RouterHealthResponse.ModelStatus]?) -> [ResidentModel] {
         var byCanonical: [String: ResidentModel] = [:]
-        for (routerID, status) in routerModels ?? [:] {
+        for (routerID, status) in preferredRouterRows(routerModels ?? [:]) {
             guard let canonical = canonicalWorkbenchModelID(for: routerID, backend: status.model ?? routerID) else { continue }
+            guard byCanonical[canonical] == nil else { continue }
             let ready = (byCanonical[canonical]?.ready ?? false) || status.ready
             byCanonical[canonical] = ResidentModel(
                 canonical: canonical,
@@ -195,6 +198,20 @@ public enum ModelCatalog {
         return byCanonical.values.sorted {
             let l = modelSortRank($0.canonical), r = modelSortRank($1.canonical)
             return l != r ? l < r : $0.title < $1.title
+        }
+    }
+
+    /// Select coherent metadata from a ready route before its offline aliases.
+    /// Equal-readiness ties prefer the canonical key, then a stable key order.
+    private static func preferredRouterRows(_ rows: [String: RouterHealthResponse.ModelStatus]) -> [(key: String, value: RouterHealthResponse.ModelStatus)] {
+        rows.sorted { lhs, rhs in
+            if lhs.value.ready != rhs.value.ready { return lhs.value.ready }
+            let leftCanonical = canonicalWorkbenchModelID(for: lhs.key, backend: lhs.value.model ?? lhs.key)
+            let rightCanonical = canonicalWorkbenchModelID(for: rhs.key, backend: rhs.value.model ?? rhs.key)
+            let leftIsCanonical = lhs.key == leftCanonical
+            let rightIsCanonical = rhs.key == rightCanonical
+            if leftIsCanonical != rightIsCanonical { return leftIsCanonical }
+            return lhs.key < rhs.key
         }
     }
 

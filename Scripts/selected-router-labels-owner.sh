@@ -144,10 +144,10 @@ EOF
   cat >"$EVIDENCE_DIR/source-hashes.expected" <<'EOF'
 __GITIGNORE_HASH__  .gitignore
 __OWNER_SCRIPT_HASH__  Scripts/selected-router-labels-owner.sh
-0ec0e42b56b0a2b05493baf57cdf9c69b6f137c5c86953a0a48d9b460a9e4ec9  WorkbenchKit/Sources/WorkbenchKit/Router/RouterModels.swift
+d50d7927293c7da0c44034d6eedfd83df0b178b31b60a92f9d913bce6f692cd5  WorkbenchKit/Sources/WorkbenchKit/Router/RouterModels.swift
 78fae7bd7cbd96d827da77313fb8197fcf21e65740fac731d5612afbc89eed84  WorkbenchKit/Sources/WorkbenchKit/Skills/Skill.swift
 786bde62e7cdf3496af7892c6bfe8a40b007fec9080c042d98cb6c6da3e97249  WorkbenchKit/Sources/WorkbenchKit/Skills/SkillCatalog.swift
-1bbea05e39a1743aae47f833abfe5cbc008120b58f6d428672b721b305d65780  WorkbenchKit/Tests/WorkbenchKitTests/RouterTests.swift
+4aa8bbf7267285fad41c6c0cc2764756c05fad7cb306ebf1bffe0c52ad8085e9  WorkbenchKit/Tests/WorkbenchKitTests/RouterTests.swift
 __HOSAKA_CONFIG_HASH__  hosaka.config.yaml
 EOF
   local owner_hash config_hash
@@ -267,24 +267,133 @@ sign_candidate() {
 
 restore_backup_files() {
   local backup="$1"
-  if [[ -d "$backup" ]]; then
-    rm -rf "$INSTALLED_APP"
-    ditto "$backup" "$INSTALLED_APP" || true
+  [[ -d "$backup" && ! -L "$backup" ]] || { printf '%s\n' "rollback failed: missing or unsafe backup $backup" >&2; return 1; }
+  local restore_root staged displaced
+  restore_root="$(mktemp -d "$(dirname "$INSTALLED_APP")/.Workbench-restore.XXXXXX")" || return 1
+  staged="$restore_root/Workbench.app"
+  displaced="$restore_root/displaced.app"
+  if ! ditto "$backup" "$staged" >"$LOG_DIR/rollback-stage.stdout.log" 2>"$LOG_DIR/rollback-stage.stderr.log"; then
+    printf '%s\n' "rollback failed: backup staging copy failed; installed app preserved" >&2
+    rm -rf "$restore_root"
+    return 1
   fi
+  if ! require_bundle_identity "$staged" rollback-staged || ! require_signature "$staged" rollback-staged || ! compare_backup_copy "$backup" "$staged"; then
+    printf '%s\n' "rollback failed: staged backup validation failed; installed app preserved" >&2
+    rm -rf "$restore_root"
+    return 1
+  fi
+  if [[ -e "$INSTALLED_APP" ]]; then
+    if ! rename_app_directory "$INSTALLED_APP" "$displaced"; then
+      printf '%s\n' "rollback failed: could not preserve current app before swap" >&2
+      rm -rf "$restore_root"
+      return 1
+    fi
+  fi
+  if ! rename_app_directory "$staged" "$INSTALLED_APP"; then
+    printf '%s\n' "rollback failed: staged app swap failed" >&2
+    if [[ -d "$displaced" ]] && ! rename_app_directory "$displaced" "$INSTALLED_APP"; then
+      printf '%s\n' "rollback failed: prior app retained at $displaced; automatic restore could not complete" >&2
+      return 1
+    fi
+    rm -rf "$restore_root"
+    return 1
+  fi
+  rm -rf "$restore_root"
+}
+
+compare_backup_copy() {
+  python3 - "$1" "$2" <<'PY'
+import hashlib, pathlib, sys
+backup, staged = map(pathlib.Path, sys.argv[1:])
+for rel in ("Contents/MacOS/Workbench", "Contents/Info.plist", "Contents/_CodeSignature/CodeResources"):
+    if hashlib.sha256((backup / rel).read_bytes()).digest() != hashlib.sha256((staged / rel).read_bytes()).digest():
+        raise SystemExit(f"rollback staged bytes differ: {rel}")
+PY
+}
+
+rename_app_directory() {
+  # Same-filesystem rename cannot silently nest an app inside an existing directory.
+  python3 - "$1" "$2" <<'PY'
+import os, sys
+os.rename(sys.argv[1], sys.argv[2])
+PY
 }
 
 reopen_workbench() {
   if [[ -n "${WORKBENCH_OWNER_OPEN_STUB:-}" ]]; then
-    printf '%s\n' "open -a Workbench" >>"$WORKBENCH_OWNER_OPEN_STUB"
+    printf '%s\n' "open -a Workbench" >>"$WORKBENCH_OWNER_OPEN_STUB" || return 1
     return 0
   fi
-  /usr/bin/open -a Workbench >/dev/null 2>&1 || true
+  /usr/bin/open -a Workbench >/dev/null 2>&1
 }
 
 restore_backup_and_reopen() {
   local backup="$1"
-  restore_backup_files "$backup"
-  reopen_workbench
+  restore_backup_files "$backup" || return 1
+  reopen_workbench || { printf '%s\n' "rollback failed: restored app did not reopen" >&2; return 1; }
+}
+
+restore_displaced_files() {
+  local backup="$1"
+  local root="${LAST_CANDIDATE_SWAP_ROOT:-}"
+  [[ -n "$root" && -d "$root/displaced.app" ]] || { printf '%s\n' "rollback failed: displaced original app is unavailable" >&2; return 1; }
+  local displaced="$root/displaced.app" rejected="$root/rejected.app"
+  require_bundle_identity "$displaced" displaced-original || return 1
+  require_signature "$displaced" displaced-original || return 1
+  compare_backup_copy "$backup" "$displaced" || return 1
+  if [[ -e "$INSTALLED_APP" ]] && ! rename_app_directory "$INSTALLED_APP" "$rejected"; then
+    printf '%s\n' "rollback failed: cannot preserve rejected candidate; original retained at $displaced" >&2
+    return 1
+  fi
+  if ! rename_app_directory "$displaced" "$INSTALLED_APP"; then
+    printf '%s\n' "rollback failed: cannot rename original back; original retained at $displaced" >&2
+    if [[ -d "$rejected" ]] && ! rename_app_directory "$rejected" "$INSTALLED_APP"; then
+      printf '%s\n' "rollback failed: rejected candidate retained at $rejected" >&2
+    fi
+    return 1
+  fi
+  rm -rf "$root"
+  LAST_CANDIDATE_SWAP_ROOT=""
+}
+
+restore_displaced_and_reopen() {
+  restore_displaced_files "$1" || return 1
+  reopen_workbench || { printf '%s\n' "rollback failed: original restored but did not reopen" >&2; return 1; }
+}
+
+install_candidate_files() {
+  local candidate="$1" backup="$2"
+  LAST_CANDIDATE_SWAP_ROOT=""
+  local root staged
+  root="$(mktemp -d "$(dirname "$INSTALLED_APP")/.Workbench-install.XXXXXX")" || return 1
+  staged="$root/Workbench.app"
+  if ! ditto "$candidate" "$staged" >"$LOG_DIR/install-candidate.stdout.log" 2>"$LOG_DIR/install-candidate.stderr.log"; then
+    printf '%s\n' "install failed: candidate staging copy failed; original app preserved" >&2
+    rm -rf "$root"
+    return 1
+  fi
+  if ! require_bundle_identity "$staged" install-staged || ! require_signature "$staged" install-staged || ! compare_backup_copy "$candidate" "$staged"; then
+    printf '%s\n' "install failed: staged candidate validation failed; original app preserved" >&2
+    rm -rf "$root"
+    return 1
+  fi
+  if ! compare_backup_copy "$backup" "$INSTALLED_APP" || ! require_bundle_identity "$INSTALLED_APP" original-before-swap || ! require_signature "$INSTALLED_APP" original-before-swap; then
+    printf '%s\n' "install failed: original app changed before swap" >&2
+    rm -rf "$root"
+    return 1
+  fi
+  if ! rename_app_directory "$INSTALLED_APP" "$root/displaced.app"; then
+    printf '%s\n' "install failed: could not preserve original app before swap" >&2
+    rm -rf "$root"
+    return 1
+  fi
+  LAST_CANDIDATE_SWAP_ROOT="$root"
+  if ! rename_app_directory "$staged" "$INSTALLED_APP"; then
+    printf '%s\n' "install failed: candidate rename swap failed" >&2
+    restore_displaced_files "$backup" || { printf '%s\n' "install and original restoration failed; preserved original at $root/displaced.app" >&2; return 1; }
+    return 1
+  fi
+  printf '%s\n' "$root" >"$EVIDENCE_DIR/candidate-swap-path.txt" || { restore_displaced_files "$backup" || return 1; return 1; }
 }
 
 run_deploy() {
@@ -299,38 +408,43 @@ run_deploy() {
   sign_candidate
   local staged
   staged="$(cat "$EVIDENCE_DIR/signed-candidate-path.txt")"
-  quit_exact_current_app_if_running
   local backup="$BACKUP_DIR/Workbench-installed-$(stamp).app"
   log_run backup-installed ditto "$INSTALLED_APP" "$backup"
   require_bundle_identity "$backup" backup || exit 1
   require_signature "$backup" backup || exit 1
   shasum -a 256 "$backup/Contents/MacOS/Workbench" "$backup/Contents/Info.plist" "$backup/Contents/_CodeSignature/CodeResources" >"$EVIDENCE_DIR/backup-sha256.txt"
-  rm -rf "$INSTALLED_APP"
-  if ! ditto "$staged" "$INSTALLED_APP" >"$LOG_DIR/install-candidate.stdout.log" 2>"$LOG_DIR/install-candidate.stderr.log"; then
-    restore_backup_and_reopen "$backup"
+  quit_exact_current_app_if_running
+  if ! install_candidate_files "$staged" "$backup"; then
+    if [[ -d "$INSTALLED_APP" ]] && compare_backup_copy "$backup" "$INSTALLED_APP"; then
+      reopen_workbench || printf '%s\n' "install failed: original preserved but did not reopen" >&2
+    else
+      printf '%s\n' "install failed: original retained at ${LAST_CANDIDATE_SWAP_ROOT:-unknown}/displaced.app" >&2
+    fi
     exit 1
   fi
   if ! require_bundle_identity "$INSTALLED_APP" installed-after || ! require_signature "$INSTALLED_APP" installed-after; then
-    restore_backup_and_reopen "$backup"
+    restore_displaced_and_reopen "$backup" || { printf '%s\n' "installed validation and original restoration failed" >&2; exit 1; }
     exit 1
   fi
   verify_installed_matches_signed_candidate "$staged" || {
-    restore_backup_and_reopen "$backup"
+    restore_displaced_and_reopen "$backup" || { printf '%s\n' "installed binding and original restoration failed" >&2; exit 1; }
     exit 1
   }
   if ! /usr/bin/open -a Workbench >"$LOG_DIR/reopen-workbench.stdout.log" 2>"$LOG_DIR/reopen-workbench.stderr.log"; then
-    restore_backup_and_reopen "$backup"
+    restore_displaced_and_reopen "$backup" || { printf '%s\n' "candidate open and original restoration failed" >&2; exit 1; }
     exit 1
   fi
   for _ in $(seq 1 30); do
     if observe_running_app | grep -F "$INSTALLED_APP/Contents/MacOS/Workbench" >/dev/null; then
       printf '%s\n' "$backup" >"$EVIDENCE_DIR/last-backup-path.txt"
+      rm -rf "$LAST_CANDIDATE_SWAP_ROOT"
+      LAST_CANDIDATE_SWAP_ROOT=""
       return 0
     fi
     sleep 1
   done
-  restore_backup_and_reopen "$backup"
-  printf '%s\n' "Workbench did not reopen from installed app; backup restored" >&2
+  restore_displaced_and_reopen "$backup" || { printf '%s\n' "Workbench did not reopen and original restoration failed" >&2; exit 1; }
+  printf '%s\n' "Workbench did not reopen from candidate; original app restored and reopened" >&2
   exit 1
 }
 
@@ -505,7 +619,7 @@ EOF
   [[ -z "$(git -C "$SOURCE_DIR" ls-files --others --exclude-standard)" ]]
 }
 
-run_test_rollback() {
+run_test_rollback() (
   local root="$EVIDENCE_DIR/tests/rollback"
   rm -rf "$root"
   mkdir -p "$root"
@@ -524,6 +638,8 @@ run_test_rollback() {
     printf '%s\n' "invalid candidate fixture did not fail identity predicate" >&2
     exit 1
   fi
+  local rollback_fixture_root="$root"
+  require_signature() { [[ "$1" == "$rollback_fixture_root/"* ]] && [[ -f "$1/Contents/_CodeSignature/CodeResources" ]]; }
   INSTALLED_APP="$installed"
   rm -rf "$INSTALLED_APP"
   ditto "$bad" "$INSTALLED_APP"
@@ -536,8 +652,61 @@ run_test_rollback() {
   restore_backup_and_reopen "$backup"
   grep -F "open -a Workbench" "$open_stub" >/dev/null
   cmp "$backup/Contents/MacOS/Workbench" "$INSTALLED_APP/Contents/MacOS/Workbench" >"$root/cmp.log"
+  # All overrides are confined to this fixture subprocess; real deployment keeps native signature checks.
+  local force_restore_copy_failure=1
+  local force_candidate_copy_failure=1
+  local candidate_good="$root/good-candidate.app"
+  make_minimal_app "$candidate_good" "good-candidate"
+  ditto() {
+    if [[ "${force_restore_copy_failure:-0}" == 1 && "$1" == "$backup" ]]; then return 73; fi
+    if [[ "${force_candidate_copy_failure:-0}" == 1 && "$1" == "$candidate_good" ]]; then return 73; fi
+    command ditto "$@"
+  }
+  if install_candidate_files "$candidate_good" "$backup"; then
+    printf '%s\n' "candidate staging copy failure was swallowed" >&2; exit 1
+  fi
+  cmp "$backup/Contents/MacOS/Workbench" "$INSTALLED_APP/Contents/MacOS/Workbench"
+  if restore_backup_files "$backup"; then
+    printf '%s\n' "restore copy failure was swallowed" >&2; exit 1
+  fi
+  cmp "$backup/Contents/MacOS/Workbench" "$INSTALLED_APP/Contents/MacOS/Workbench"
+  force_restore_copy_failure=0
+  force_candidate_copy_failure=0
+  install_candidate_files "$candidate_good" "$backup"
+  cmp "$candidate_good/Contents/MacOS/Workbench" "$INSTALLED_APP/Contents/MacOS/Workbench"
+  restore_displaced_files "$backup"
+  cmp "$backup/Contents/MacOS/Workbench" "$INSTALLED_APP/Contents/MacOS/Workbench"
+  local original_rename
+  original_rename="$(declare -f rename_app_directory)"
+  rename_app_directory() {
+    if [[ "$1" == "$rollback_fixture_root/".Workbench-install.*/Workbench.app && "$2" == "$INSTALLED_APP" ]]; then return 75; fi
+    python3 - "$1" "$2" <<'PY'
+import os, sys
+os.rename(sys.argv[1], sys.argv[2])
+PY
+  }
+  if install_candidate_files "$candidate_good" "$backup"; then
+    printf '%s\n' "candidate rename swap failure was swallowed" >&2; exit 1
+  fi
+  cmp "$backup/Contents/MacOS/Workbench" "$INSTALLED_APP/Contents/MacOS/Workbench"
+  eval "$original_rename"
+  if restore_backup_files "$bad"; then
+    printf '%s\n' "invalid backup identity was accepted" >&2; exit 1
+  fi
+  cmp "$backup/Contents/MacOS/Workbench" "$INSTALLED_APP/Contents/MacOS/Workbench"
+  if restore_backup_files "$root/missing-backup.app"; then
+    printf '%s\n' "missing backup was accepted" >&2; exit 1
+  fi
+  cmp "$backup/Contents/MacOS/Workbench" "$INSTALLED_APP/Contents/MacOS/Workbench"
+  local original_open
+  original_open="$(declare -f reopen_workbench)"
+  reopen_workbench() { return 74; }
+  if restore_backup_and_reopen "$backup"; then
+    printf '%s\n' "rollback reopen failure was swallowed" >&2; exit 1
+  fi
+  eval "$original_open"
   printf '%s\n' "rollback fixture passed" >"$root/result.txt"
-}
+)
 
 run_test_signed_binding() {
   local root="$EVIDENCE_DIR/tests/signed-binding"
