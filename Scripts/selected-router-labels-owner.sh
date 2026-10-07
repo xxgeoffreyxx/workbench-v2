@@ -574,6 +574,8 @@ SH
   chmod +x "$verifier"
   printf '%s\n' "bash $verifier WORKBENCH-SELECTED-NAMES $SOURCE_DIR" >"$LOG_DIR/router-labels-swift-test.command.txt"
   bash "$verifier" WORKBENCH-SELECTED-NAMES "$SOURCE_DIR" >"$LOG_DIR/router-labels-swift-test.stdout.log" 2>"$LOG_DIR/router-labels-swift-test.stderr.log"
+  cat "$LOG_DIR/router-labels-swift-test.stdout.log"
+  cat "$LOG_DIR/router-labels-swift-test.stderr.log" >&2
 }
 
 run_test_native_ui_verifier_relocation() {
