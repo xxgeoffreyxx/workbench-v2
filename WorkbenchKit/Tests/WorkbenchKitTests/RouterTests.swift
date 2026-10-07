@@ -120,6 +120,14 @@ final class RouterTests: XCTestCase {
         XCTAssertEqual(fallback.subtitle, "Alibaba Cloud · fallback online")
     }
 
+    func testResidentModelsWithoutRouterLabelUseCanonicalTitle() throws {
+        let json = #"{"ok":true,"models":{"hosaka-helga":{"host":"m1max","ready":false},"ornith":{"host":"m1max","ready":true},"qwen30":{"ready":true}}}"#
+        let health = try JSONDecoder().decode(RouterHealthResponse.self, from: Data(json.utf8))
+        let resident = ModelCatalog.residentModels(from: health.models)
+        XCTAssertEqual(resident, [ResidentModel(canonical: "ornith", title: "Ornith (Helga)", host: "m1max", ready: true)])
+        XCTAssertEqual(ModelCatalog.readinessByCanonicalModel(from: health.models), ["ornith": true])
+    }
+
     func testDorsettSummary() {
         let parsed = Dorsett.summary(from: #"{"summary":"Good fit {really}","score":8} trailing"#)
         XCTAssertEqual(parsed?.summary, "Good fit {really}")

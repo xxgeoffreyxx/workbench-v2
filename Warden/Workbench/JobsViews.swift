@@ -28,7 +28,7 @@ extension JobStatus {
     }
 }
 
-/// Sidebar list of Hosaka tasks, Helga and peer reviews, RL Studio runs and live benchmarks, grouped by project.
+/// Sidebar list of Hosaka tasks, Helga and peer reviews, RL Studio runs and live benchmarks, newest first.
 struct JobsListView: View {
     @ObservedObject private var hub = WorkbenchHub.shared
     @State private var workflow: String = "All"
@@ -41,11 +41,6 @@ struct JobsListView: View {
                 && (query.isEmpty || job.title.localizedCaseInsensitiveContains(query)
                     || job.project.localizedCaseInsensitiveContains(query))
         }
-    }
-
-    private var grouped: [(String, [JobRecord])] {
-        let groups = Dictionary(grouping: filtered, by: \.project)
-        return groups.keys.sorted().map { ($0, groups[$0] ?? []) }
     }
 
     var body: some View {
@@ -72,12 +67,9 @@ struct JobsListView: View {
                         .foregroundStyle(.secondary)
                         .font(.callout)
                 }
-                ForEach(grouped, id: \.0) { project, jobs in
-                    Section(project) {
-                        ForEach(jobs) { job in
-                            JobRowView(job: job).tag(job.id)
-                        }
-                    }
+                // One flat list, newest first (JobFeed sorts strictly by time).
+                ForEach(filtered) { job in
+                    JobRowView(job: job).tag(job.id)
                 }
             }
             .listStyle(.sidebar)
@@ -120,7 +112,7 @@ struct JobRowView: View {
                 HStack(spacing: 4) {
                     Text(job.workflow.rawValue)
                     Text("·")
-                    Text(job.updatedAt, style: .relative)
+                    Text(ShortAge.text(for: job.updatedAt))
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
