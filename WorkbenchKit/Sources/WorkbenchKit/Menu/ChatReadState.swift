@@ -26,4 +26,27 @@ public struct ChatReadState: Equatable {
     public func isUnread(_ id: String, lastReplyAt: Date?) -> Bool {
         MenuFeed.isUnread(lastReplyAt: lastReplyAt, lastViewedAt: lastViewed(id))
     }
+
+    // MARK: - Persistence
+
+    public static let baselineKey = "workbench.chatUnreadSince"
+    public static let viewedKey = "workbench.chatLastViewed"
+
+    /// Called when the app starts, before any chat activity: sets the baseline once, so a reply that lands
+    /// before the first menu lookup is newer than it. An existing baseline is never moved.
+    public static func startup(defaults: UserDefaults, now: Date = Date()) {
+        if defaults.object(forKey: baselineKey) == nil {
+            defaults.set(now.timeIntervalSince1970, forKey: baselineKey)
+        }
+    }
+
+    /// Read state for a lookup. Falls back to creating the baseline only if startup never ran.
+    public static func load(defaults: UserDefaults, now: Date = Date()) -> ChatReadState {
+        let since = defaults.object(forKey: baselineKey) as? Double ?? {
+            let t = now.timeIntervalSince1970
+            defaults.set(t, forKey: baselineKey)
+            return t
+        }()
+        return ChatReadState(baseline: since, viewed: defaults.dictionary(forKey: viewedKey) as? [String: Double] ?? [:])
+    }
 }

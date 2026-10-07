@@ -41,6 +41,7 @@ final class WorkbenchHub: ObservableObject {
     var runningJobs: [JobRecord] { jobs.filter { $0.status == .running } }
 
     func start() {
+        ChatReadState.startup(defaults: .standard)
         WorkbenchNotifier.shared.start()
         refreshJobs()
         refreshRouter()
@@ -77,20 +78,11 @@ final class WorkbenchHub: ObservableObject {
         )
     }
 
-    private static let chatViewedKey = "workbench.chatLastViewed"
+    private static let chatViewedKey = ChatReadState.viewedKey
 
-    private static let chatUnreadSinceKey = "workbench.chatUnreadSince"
-
-    /// Read state from UserDefaults. The baseline is set (once) to now the first time unread tracking runs.
+    /// Read state from UserDefaults; start() sets the baseline before any chat activity.
     private func chatReadState() -> ChatReadState {
-        let defaults = UserDefaults.standard
-        let since = defaults.object(forKey: Self.chatUnreadSinceKey) as? Double ?? {
-            let now = Date().timeIntervalSince1970
-            defaults.set(now, forKey: Self.chatUnreadSinceKey)
-            return now
-        }()
-        return ChatReadState(baseline: since,
-                             viewed: defaults.dictionary(forKey: Self.chatViewedKey) as? [String: Double] ?? [:])
+        ChatReadState.load(defaults: .standard)
     }
 
     func markChatViewed(_ id: UUID, at date: Date = Date()) {
