@@ -18,4 +18,4 @@ deploy:
 
 testing:
   unit:
-    command: "bash Scripts/selected-router-labels-owner.sh test-clean-scope && bash Scripts/selected-router-labels-owner.sh test-rollback"
+    command: "bash Scripts/selected-router-labels-owner.sh test-clean-scope && bash Scripts/selected-router-labels-owner.sh test-rollback && bash Scripts/selected-router-labels-owner.sh test-signed-binding"

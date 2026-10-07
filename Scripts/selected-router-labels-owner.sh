@@ -349,6 +349,7 @@ payload = {
     "signed_candidate_app": str(staged),
     "signed_executable_sha256": h(staged / "Contents/MacOS/Workbench"),
     "signed_info_plist_sha256": h(staged / "Contents/Info.plist"),
+    "signed_code_resources_sha256": h(staged / "Contents/_CodeSignature/CodeResources"),
 }
 out.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 PY
@@ -376,10 +377,16 @@ PY
 
 verify_installed_matches_signed_candidate() {
   local staged="$1"
-  local installed_hash staged_hash
-  installed_hash="$(shasum -a 256 "$INSTALLED_APP/Contents/MacOS/Workbench" | awk '{print $1}')"
-  staged_hash="$(shasum -a 256 "$staged/Contents/MacOS/Workbench" | awk '{print $1}')"
-  [[ "$installed_hash" == "$staged_hash" ]] || { printf '%s\n' "installed executable does not match signed candidate" >&2; return 1; }
+  python3 - "$INSTALLED_APP" "$staged" <<'PY'
+import hashlib, pathlib, sys
+installed = pathlib.Path(sys.argv[1])
+staged = pathlib.Path(sys.argv[2])
+for rel in ("Contents/MacOS/Workbench", "Contents/Info.plist", "Contents/_CodeSignature/CodeResources"):
+    left = hashlib.sha256((installed / rel).read_bytes()).hexdigest()
+    right = hashlib.sha256((staged / rel).read_bytes()).hexdigest()
+    if left != right:
+        raise SystemExit(f"installed {rel} does not match signed candidate")
+PY
 }
 
 verify_installed_matches_signed_candidate_binding() {
@@ -389,9 +396,15 @@ verify_installed_matches_signed_candidate_binding() {
 import json, hashlib, pathlib, sys
 binding = json.loads(pathlib.Path(sys.argv[1]).read_text())
 installed = pathlib.Path(sys.argv[2])
-actual = hashlib.sha256((installed / "Contents/MacOS/Workbench").read_bytes()).hexdigest()
-if actual != binding.get("signed_executable_sha256"):
-    raise SystemExit("installed executable does not match signed candidate binding")
+checks = {
+    "Contents/MacOS/Workbench": "signed_executable_sha256",
+    "Contents/Info.plist": "signed_info_plist_sha256",
+    "Contents/_CodeSignature/CodeResources": "signed_code_resources_sha256",
+}
+for rel, key in checks.items():
+    actual = hashlib.sha256((installed / rel).read_bytes()).hexdigest()
+    if actual != binding.get(key):
+        raise SystemExit(f"installed {rel} does not match signed candidate binding")
 PY
 }
 
@@ -476,12 +489,19 @@ run_test_rollback() {
   make_minimal_app "$installed" "installed-ok"
   make_minimal_app "$backup" "backup-ok"
   make_minimal_app "$bad" "bad-candidate"
+  if ! require_bundle_identity "$bad" valid-before-mutation; then
+    printf '%s\n' "valid candidate fixture did not pass identity predicate" >&2
+    exit 1
+  fi
+  /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.example.NotWorkbench" "$bad/Contents/Info.plist"
+  if require_bundle_identity "$bad" invalid-after-mutation; then
+    printf '%s\n' "invalid candidate fixture did not fail identity predicate" >&2
+    exit 1
+  fi
   INSTALLED_APP="$installed"
   rm -rf "$INSTALLED_APP"
   ditto "$bad" "$INSTALLED_APP"
-  if require_bundle_identity "$INSTALLED_APP" installed-after && false; then
-    :
-  else
+  if ! require_bundle_identity "$INSTALLED_APP" installed-after; then
     restore_backup "$backup"
   fi
   cmp "$backup/Contents/MacOS/Workbench" "$INSTALLED_APP/Contents/MacOS/Workbench" >"$root/cmp.log"
