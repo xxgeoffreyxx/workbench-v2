@@ -171,6 +171,14 @@ run_localhost() {
   require_acceptance_input
   verify_source_scope_and_hashes record
   log_run swift-test /usr/bin/swift test --package-path "$SOURCE_DIR/WorkbenchKit"
+  # UI tests use a separate bundle/preferences identity and the explicit
+  # in-memory UI-test store. Debug's directory alone is not data isolation.
+  local ui_data="$BUILD_DIR/UI-DerivedData" ui_result="$EVIDENCE_DIR/ui-tests/$(stamp).xcresult"
+  mkdir -p "$EVIDENCE_DIR/ui-tests"
+  log_run ui-build-for-testing /usr/bin/xcodebuild -project "$SOURCE_DIR/Warden.xcodeproj" -scheme WorkbenchUI -configuration Debug -destination 'platform=macOS,arch=arm64' -derivedDataPath "$ui_data" CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= WORKBENCH_APP_BUNDLE_IDENTIFIER=me.mccaleb.Workbench.UITesting build-for-testing
+  log_run ui-menu-bar-test /usr/bin/xcodebuild -project "$SOURCE_DIR/Warden.xcodeproj" -scheme WorkbenchUI -configuration Debug -destination 'platform=macOS,arch=arm64' -derivedDataPath "$ui_data" -resultBundlePath "$ui_result" -only-testing:WardenUITests/WorkbenchUITests/testMenuBarStatusItem CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= WORKBENCH_APP_BUNDLE_IDENTIFIER=me.mccaleb.Workbench.UITesting test-without-building
+  # Zero executed tests is not an executed passing UI test.
+  grep -Eq 'Executed 1 test, with 0 failures' "$LOG_DIR/ui-menu-bar-test.stdout.log" || { printf '%s\n' 'focused menu-bar UI test did not execute and pass'; return 1; }
   log_run xcodebuild-warden /usr/bin/xcodebuild -project "$SOURCE_DIR/Warden.xcodeproj" -scheme Warden -configuration Release -destination 'platform=macOS,arch=arm64' -derivedDataPath "$DERIVED_DATA" CODE_SIGNING_ALLOWED=NO ENABLE_DEBUG_DYLIB=NO build
   [[ -d "$CANDIDATE_APP" ]] || { printf '%s\n' "candidate app missing: $CANDIDATE_APP" >&2; exit 1; }
   require_bundle_identity "$CANDIDATE_APP" candidate || exit 1
@@ -606,6 +614,7 @@ for row in acceptance['routes']:
        '--route-id',row['route_id'],'--model',row['model'],'--host',row['host'],'--display-label',row['display_label']],check=True)
 PYCODE
   fi
+  log_run native-release-ui /usr/bin/swift "$SOURCE_DIR/Scripts/verify-native-release-ui.swift" "$INSTALLED_APP" "$PRODUCTION_DIR/native-release-ui.json"
 }
 
 bind_signed_candidate() {
