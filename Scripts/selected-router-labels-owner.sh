@@ -122,6 +122,7 @@ EOF
   diff -u "$expected_dirty" "$actual_dirty" >"$LOG_DIR/dirty-scope.diff"
   cat >"$expected_branch" <<'EOF'
 .gitignore
+Scripts/00-selected-router-labels-test.sh
 Scripts/selected-router-labels-owner.sh
 WorkbenchKit/Sources/WorkbenchKit/Router/RouterModels.swift
 WorkbenchKit/Sources/WorkbenchKit/Skills/Skill.swift
@@ -134,6 +135,7 @@ EOF
   (
     cd "$SOURCE_DIR"
     shasum -a 256 .gitignore \
+      Scripts/00-selected-router-labels-test.sh \
       Scripts/selected-router-labels-owner.sh \
       WorkbenchKit/Sources/WorkbenchKit/Router/RouterModels.swift \
       WorkbenchKit/Sources/WorkbenchKit/Skills/Skill.swift \
@@ -143,6 +145,7 @@ EOF
   ) >"$hashes"
   cat >"$EVIDENCE_DIR/source-hashes.expected" <<'EOF'
 __GITIGNORE_HASH__  .gitignore
+561d0c01089ee69d05ce719211b3f3ad4b5196f2e873ae2355e0889bdc3a8c16  Scripts/00-selected-router-labels-test.sh
 __OWNER_SCRIPT_HASH__  Scripts/selected-router-labels-owner.sh
 d50d7927293c7da0c44034d6eedfd83df0b178b31b60a92f9d913bce6f692cd5  WorkbenchKit/Sources/WorkbenchKit/Router/RouterModels.swift
 78fae7bd7cbd96d827da77313fb8197fcf21e65740fac731d5612afbc89eed84  WorkbenchKit/Sources/WorkbenchKit/Skills/Skill.swift
@@ -581,6 +584,7 @@ run_test_clean_scope() {
     printf '%s\n' e >WorkbenchKit/Tests/WorkbenchKitTests/RouterTests.swift
     printf '%s\n' f >hosaka.config.yaml
     printf '%s\n' g >Scripts/selected-router-labels-owner.sh
+    printf '%s\n' h >Scripts/00-selected-router-labels-test.sh
     git add .
     git -c user.name=fixture -c user.email=fixture@example.com commit -q -m baseline
     local baseline
@@ -592,6 +596,7 @@ run_test_clean_scope() {
     printf '%s\n' ee >WorkbenchKit/Tests/WorkbenchKitTests/RouterTests.swift
     printf '%s\n' ff >hosaka.config.yaml
     printf '%s\n' gg >Scripts/selected-router-labels-owner.sh
+    printf '%s\n' hh >Scripts/00-selected-router-labels-test.sh
     git add .
     git -c user.name=fixture -c user.email=fixture@example.com commit -q -m candidate
     WORKBENCH_BASELINE_REF="$baseline" WORKBENCH_OWNER_EVIDENCE_DIR="$root/evidence" WORKBENCH_SOURCE_DIR="$root/repo" bash "$0" test-clean-scope-inner
@@ -606,6 +611,7 @@ run_test_clean_scope_inner() {
   mkdir -p "$EVIDENCE_DIR" "$LOG_DIR"
   cat >"$expected" <<'EOF'
 .gitignore
+Scripts/00-selected-router-labels-test.sh
 Scripts/selected-router-labels-owner.sh
 WorkbenchKit/Sources/WorkbenchKit/Router/RouterModels.swift
 WorkbenchKit/Sources/WorkbenchKit/Skills/Skill.swift
