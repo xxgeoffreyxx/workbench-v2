@@ -614,7 +614,7 @@ for row in acceptance['routes']:
        '--route-id',row['route_id'],'--model',row['model'],'--host',row['host'],'--display-label',row['display_label']],check=True)
 PYCODE
   fi
-  log_run native-release-ui /usr/bin/swift "$SOURCE_DIR/Scripts/verify-native-release-ui.swift" "$INSTALLED_APP" "$PRODUCTION_DIR/native-release-ui.json"
+  log_run native-release-ui /usr/bin/swift "$SOURCE_DIR/Scripts/verify-native-release-ui.swift" "$INSTALLED_APP" "$PRODUCTION_DIR/native-release-ui.json" "$ACCEPTANCE_INPUT"
 }
 
 bind_signed_candidate() {

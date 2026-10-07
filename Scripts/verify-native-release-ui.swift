@@ -5,8 +5,14 @@ import Foundation
 func fail(_ message: String) -> Never {
     FileHandle.standardError.write(Data((message + "\n").utf8)); exit(1)
 }
-guard CommandLine.arguments.count == 3 else { fail("usage: verify-native-release-ui.swift APP OUTPUT") }
+guard CommandLine.arguments.count == 4 else { fail("usage: verify-native-release-ui.swift APP OUTPUT ACCEPTANCE_INPUT") }
 let appPath = URL(fileURLWithPath: CommandLine.arguments[1]).standardizedFileURL.path
+let acceptanceData = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[3]))
+guard let acceptance = try JSONSerialization.jsonObject(with: acceptanceData) as? [String: Any],
+      let routes = acceptance["routes"] as? [[String: String]], !routes.isEmpty,
+      routes.allSatisfy({ !($0["display_label"] ?? "").isEmpty && !($0["host"] ?? "").isEmpty }) else { fail("Invalid accepted router identities") }
+let expectedLabels = routes.compactMap { $0["display_label"] }
+let expectedHosts = routes.compactMap { $0["host"] }
 guard AXIsProcessTrusted() else { fail("Accessibility permission unavailable") }
 guard let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleURL?.standardizedFileURL.path == appPath }) else { fail("Accepted installed app is not running") }
 let root = AXUIElementCreateApplication(app.processIdentifier)
@@ -74,7 +80,8 @@ let labels = elements(box).flatMap { e -> [String] in
     if (attr(e, kAXRoleAttribute) as? String) == kAXStaticTextRole, let v = attr(e, kAXValueAttribute) as? String { values.append(v) }
     return values
 }
-guard labels.contains(where: { $0.contains("Saka") }), labels.contains(where: { $0.contains("Ang") }) else { fail("What's online box does not show Saka and Ang") }
+guard expectedLabels.allSatisfy({ expected in labels.contains(where: { $0.contains(expected) }) }),
+      expectedHosts.allSatisfy({ expected in labels.contains(where: { $0.contains(expected) }) }) else { fail("What's online box does not show the accepted router labels and hosts") }
 press("Chats")
 guard waitFor({ selected("Chats") }) else { fail("Chats tab did not become selected") }
 let inspectorLabels = ["Chat settings", "Project folder and skills", "Model and router status"]
@@ -85,6 +92,6 @@ if !inspectorLabels.allSatisfy({ find($0) != nil }) {
 guard waitFor({ inspectorLabels.allSatisfy { find($0) != nil } }) else { fail("Chats inspector is not visible") }
 let report: [String: Any] = ["observed_at": ISO8601DateFormatter().string(from: Date()), "application": appPath,
     "pid": app.processIdentifier, "jobs_bottom_left_box": geometry(boxRect), "window": geometry(windowRect),
-    "resident_labels": labels.filter { $0.contains("Saka") || $0.contains("Ang") }, "chats_inspector_controls": inspectorLabels]
+    "resident_labels": labels.filter { label in expectedLabels.contains(where: { label.contains($0) }) }, "chats_inspector_controls": inspectorLabels]
 try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]).write(to: URL(fileURLWithPath: CommandLine.arguments[2]), options: .atomic)
-print("Verified installed Jobs bottom-left box, Saka/Ang labels, and Chats inspector")
+print("Verified installed Jobs bottom-left box, accepted router labels/hosts, and Chats inspector")
