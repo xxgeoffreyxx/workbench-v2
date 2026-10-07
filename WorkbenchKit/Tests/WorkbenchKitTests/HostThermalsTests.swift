@@ -145,4 +145,74 @@ final class ThermalSamplerTests: XCTestCase {
         XCTAssertTrue(s.tick(host: "m1max") { _ in }, "success clears the backoff")
         XCTAssertEqual(launches.all.count, 4)
     }
+
+    // MARK: - Real-process drain
+
+    private func runSampler(_ script: String, timeout: TimeInterval) -> (output: String?, elapsed: TimeInterval) {
+        let sampler = ThermalSampler(timeout: timeout, makeProcess: { _ in
+            SSHSamplerProcess(executable: URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", script])
+        })
+        let done = expectation(description: "completion")
+        let box = OutputBox()
+        let started = Date()
+        sampler.tick(host: "local") { result in
+            box.value = result.map { _ in "parsed" }
+            done.fulfill()
+        }
+        wait(for: [done], timeout: timeout + 10)
+        return (box.value, Date().timeIntervalSince(started))
+    }
+
+    func testLargeOutputDoesNotStallTheProcess() throws {
+        let done = expectation(description: "exit")
+        let box = OutputBox()
+        let p = SSHSamplerProcess(executable: URL(fileURLWithPath: "/bin/sh"),
+                                  arguments: ["-c", "head -c 300000 /dev/zero | tr '\\0' x; echo; echo '\(line)'"])
+        try p.start { output, success in
+            box.value = success ? output : nil
+            done.fulfill()
+        }
+        let result = XCTWaiter().wait(for: [done], timeout: 5)
+        if result != .completed { p.terminate() }
+        XCTAssertEqual(result, .completed, "a >64KB writer must not block on a full pipe")
+        let output = try XCTUnwrap(box.value)
+        XCTAssertGreaterThan(output.utf8.count, 300_000)
+        XCTAssertNotNil(HostThermals.parse(host: "local", output: output))
+    }
+
+    func testLargeOutputSampleSucceedsWithinDeadline() {
+        let r = runSampler("head -c 300000 /dev/zero | tr '\\0' x; echo; echo '\(line)'", timeout: 5)
+        XCTAssertEqual(r.output, "parsed")
+        XCTAssertLessThan(r.elapsed, 5)
+    }
+
+    func testRetainedOutputIsCapped() throws {
+        let done = expectation(description: "exit")
+        let box = OutputBox()
+        let p = SSHSamplerProcess(executable: URL(fileURLWithPath: "/bin/sh"),
+                                  arguments: ["-c", "head -c 3000000 /dev/zero | tr '\\0' x; echo done"])
+        try p.start { output, success in
+            box.value = success ? output : nil
+            done.fulfill()
+        }
+        let result = XCTWaiter().wait(for: [done], timeout: 10)
+        if result != .completed { p.terminate() }
+        XCTAssertEqual(result, .completed)
+        XCTAssertLessThanOrEqual(try XCTUnwrap(box.value).utf8.count, SSHSamplerProcess.maxRetainedBytes)
+    }
+
+    func testHungProcessIsTerminatedAtDeadline() {
+        let r = runSampler("sleep 30", timeout: 0.5)
+        XCTAssertNil(r.output)
+        XCTAssertLessThan(r.elapsed, 3, "failure must be reported promptly at the deadline")
+    }
+}
+
+private final class OutputBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _value: String?
+    var value: String? {
+        get { lock.withLock { _value } }
+        set { lock.withLock { _value = newValue } }
+    }
 }

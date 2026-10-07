@@ -57,33 +57,88 @@ public protocol SamplerProcess: AnyObject, Sendable {
 public final class SSHSamplerProcess: SamplerProcess, @unchecked Sendable {
     private let process = Process()
 
-    public init(host: String) {
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-        process.arguments = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=8", host,
-                             "/usr/bin/python3 ~/bakeoff/thermal-sample.py"]
+    public static let maxRetainedBytes = 1 << 20
+
+    public convenience init(host: String) {
+        self.init(executable: URL(fileURLWithPath: "/usr/bin/ssh"),
+                  arguments: ["-o", "BatchMode=yes", "-o", "ConnectTimeout=8", host,
+                              "/usr/bin/python3 ~/bakeoff/thermal-sample.py"])
+    }
+
+    public init(executable: URL, arguments: [String]) {
+        process.executableURL = executable
+        process.arguments = arguments
     }
 
     public func start(onExit: @escaping @Sendable (String, Bool) -> Void) throws {
         let pipe = Pipe()
+        let reader = pipe.fileHandleForReading
+        let done = DispatchGroup()
+        done.enter() // stdout reaches EOF (or the reader is stopped)
+        done.enter() // the process exits
+        // These closures hold self strongly on purpose: the object must outlive its reader. The cycle is
+        // broken when the reader stops (EOF, or terminate's grace period), which clears both closures.
+        readerDone = {
+            let first: Bool = self.lock.withLock {
+                guard !self.readerStopped else { return false }
+                self.readerStopped = true
+                self.readerDone = nil
+                return true
+            }
+            guard first else { return }
+            reader.readabilityHandler = nil
+            done.leave()
+        }
+        // Drain while the process runs: a child that writes more than the pipe buffer would otherwise block
+        // on write and never exit. Only the last maxRetainedBytes are kept (the reading is the last line).
+        reader.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            if chunk.isEmpty { self.stopReader(); return }
+            self.lock.withLock {
+                self.output.append(chunk)
+                if self.output.count > Self.maxRetainedBytes {
+                    self.output.removeFirst(self.output.count - Self.maxRetainedBytes)
+                }
+            }
+        }
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
         process.standardInput = FileHandle.nullDevice
-        process.terminationHandler = { p in
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            onExit(String(data: data, encoding: .utf8) ?? "", p.terminationStatus == 0)
+        process.terminationHandler = { _ in done.leave() }
+        done.notify(queue: .global()) {
+            let data = self.lock.withLock { self.output }
+            onExit(String(decoding: data, as: UTF8.self), self.process.terminationStatus == 0 && !self.wasTerminated)
         }
-        try process.run()
+        do {
+            try process.run()
+        } catch {
+            stopReader()
+            throw error
+        }
     }
 
     public func terminate() {
-        guard process.isRunning else { return }
-        process.terminate()
+        lock.withLock { wasTerminated = true }
+        if process.isRunning { process.terminate() }
         let pid = process.processIdentifier
-        // ssh normally exits on SIGTERM; make sure a wedged one cannot linger.
+        // ssh normally exits on SIGTERM; make sure a wedged one cannot linger, then stop the reader in case a
+        // grandchild still holds stdout open.
         DispatchQueue.global().asyncAfter(deadline: .now() + 2) { [process] in
             if process.isRunning { kill(pid, SIGKILL) }
+            self.stopReader()
         }
     }
+
+    private func stopReader() {
+        let stop = lock.withLock { readerDone }
+        stop?()
+    }
+
+    private let lock = NSLock()
+    private var output = Data()
+    private var readerStopped = false
+    private var wasTerminated = false
+    private var readerDone: (@Sendable () -> Void)?
 }
 
 /// Polls hosts with at most one sample in flight per host, a hard deadline per sample (the process is killed when

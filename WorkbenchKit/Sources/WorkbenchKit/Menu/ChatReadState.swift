@@ -27,6 +27,14 @@ public struct ChatReadState: Equatable {
         MenuFeed.isUnread(lastReplyAt: lastReplyAt, lastViewedAt: lastViewed(id))
     }
 
+    public typealias MessageStamp = (date: Date?, isOwn: Bool)
+
+    /// The unread source for a chat: the newest timestamp among messages the user did not write. Own sends,
+    /// project moves and other metadata edits (which bump the chat's updatedDate) never count as a reply.
+    public static func lastAssistantReply(_ messages: [MessageStamp]) -> Date? {
+        messages.filter { !$0.isOwn }.compactMap(\.date).max()
+    }
+
     // MARK: - Persistence
 
     public static let baselineKey = "workbench.chatUnreadSince"

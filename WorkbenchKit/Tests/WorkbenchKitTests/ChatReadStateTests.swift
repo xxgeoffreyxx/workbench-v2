@@ -55,4 +55,54 @@ final class ChatReadStateTests: XCTestCase {
         ChatReadState.startup(defaults: defaults, now: Date(timeIntervalSince1970: 1_000))
         XCTAssertEqual(ChatReadState.load(defaults: defaults).baseline, 500)
     }
+
+    // MARK: - Unread source: the latest assistant reply, not the chat's updatedDate
+
+    private func t(_ s: Double) -> Date { Date(timeIntervalSince1970: s) }
+
+    func testLastAssistantReplyIgnoresOwnMessagesAndMissingTimestamps() {
+        let messages: [ChatReadState.MessageStamp] = [(t(1_010), false), (t(1_050), true), (nil, false)]
+        XCTAssertEqual(ChatReadState.lastAssistantReply(messages), t(1_010))
+        XCTAssertNil(ChatReadState.lastAssistantReply([(t(1_050), true)]))
+        XCTAssertNil(ChatReadState.lastAssistantReply([]))
+    }
+
+    /// (1) The user views a reply, then sends their own message: still read.
+    func testOwnSendAfterViewingStaysRead() {
+        var state = ChatReadState(baseline: baseline.timeIntervalSince1970)
+        state.markViewed(id, at: t(1_060))
+        let messages: [ChatReadState.MessageStamp] = [(t(1_020), true), (t(1_050), false), (t(1_100), true)]
+        XCTAssertFalse(state.isUnread(id, lastReplyAt: ChatReadState.lastAssistantReply(messages)))
+    }
+
+    /// (2) A project move or metadata edit bumps updatedDate but adds no assistant message: still read.
+    func testMetadataChangeWithoutNewReplyStaysRead() {
+        var state = ChatReadState(baseline: baseline.timeIntervalSince1970)
+        state.markViewed(id, at: t(1_060))
+        let messages: [ChatReadState.MessageStamp] = [(t(1_050), false)]
+        // updatedDate is now t(1_200); it is no longer the unread source.
+        XCTAssertFalse(state.isUnread(id, lastReplyAt: ChatReadState.lastAssistantReply(messages)))
+    }
+
+    /// (3) An assistant reply after the startup baseline, never viewed: unread.
+    func testAssistantReplyAfterBaselineIsUnread() {
+        let state = ChatReadState(baseline: baseline.timeIntervalSince1970)
+        let messages: [ChatReadState.MessageStamp] = [(t(1_040), true), (t(1_050), false)]
+        XCTAssertTrue(state.isUnread(id, lastReplyAt: ChatReadState.lastAssistantReply(messages)))
+    }
+
+    /// (4) An existing install: baseline set, a partial viewed map without this chat. Its last assistant
+    /// reply predates the baseline, even though its updatedDate (a later own send / move) does not: read.
+    func testOldChatMissingFromPartialViewedMapStaysRead() {
+        let suite = "ChatReadStateTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(1_000.0, forKey: ChatReadState.baselineKey)
+        defaults.set(["other-chat": 1_500.0], forKey: ChatReadState.viewedKey)
+        ChatReadState.startup(defaults: defaults, now: t(2_000))
+        let state = ChatReadState.load(defaults: defaults, now: t(2_000))
+        let messages: [ChatReadState.MessageStamp] = [(t(900), false), (t(1_300), true)]
+        XCTAssertFalse(state.isUnread(id, lastReplyAt: ChatReadState.lastAssistantReply(messages)))
+        XCTAssertTrue(state.isUnread(id, lastReplyAt: t(1_300)), "the old updatedDate-style source would light it up")
+    }
 }
