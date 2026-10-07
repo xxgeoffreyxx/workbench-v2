@@ -117,7 +117,9 @@ struct WardenApp: App {
             forName: RequestMessagesTransformer.name
         )
 
-        TokenManager.migrateKeychainIfNeeded()
+        if !TestIsolation.isUITesting() {
+            TokenManager.migrateKeychainIfNeeded()
+        }
 
         DatabasePatcher.applyPatches(context: persistenceController.container.viewContext)
         DatabasePatcher.migrateExistingConfiguration(context: persistenceController.container.viewContext)

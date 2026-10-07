@@ -7,10 +7,12 @@ final class ProjectFolders: ObservableObject {
     static let shared = ProjectFolders()
 
     @Published private(set) var paths: [String: String] = [:]
-    private let fileURL = Workbench.supportDirectory.appendingPathComponent("project-folders.json")
+    /// nil under UI testing: folders stay in memory and the real file is never read or written.
+    private let fileURL = TestIsolation.persistentFile(
+        Workbench.supportDirectory.appendingPathComponent("project-folders.json"))
 
     private init() {
-        if let data = try? Data(contentsOf: fileURL),
+        if let fileURL, let data = try? Data(contentsOf: fileURL),
            let decoded = try? JSONDecoder().decode([String: String].self, from: data) {
             paths = decoded
         }
@@ -24,7 +26,7 @@ final class ProjectFolders: ObservableObject {
     func setFolder(_ url: URL?, for project: ProjectEntity) {
         guard let id = project.id else { return }
         paths[id.uuidString] = url?.path
-        if let data = try? JSONEncoder().encode(paths) {
+        if let fileURL, let data = try? JSONEncoder().encode(paths) {
             try? data.write(to: fileURL, options: .atomic)
         }
         WorkbenchTools.shared.reset(projectID: id)

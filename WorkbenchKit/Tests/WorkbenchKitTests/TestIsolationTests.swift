@@ -25,4 +25,10 @@ final class TestIsolationTests: XCTestCase {
         XCTAssertEqual(UserDefaults(suiteName: TestIsolation.defaultsSuiteName)?.string(forKey: "TestIsolationTests.probe"), "x")
         d.removeObject(forKey: "TestIsolationTests.probe")
     }
+
+    func testPersistentFileIsNilWhenUITestingAndUnchangedInProduction() {
+        let url = URL(fileURLWithPath: "/tmp/support/project-folders.json")
+        XCTAssertNil(TestIsolation.persistentFile(url, arguments: ["/App", "-WorkbenchUITesting"]))
+        XCTAssertEqual(TestIsolation.persistentFile(url, arguments: ["/App"]), url)
+    }
 }
