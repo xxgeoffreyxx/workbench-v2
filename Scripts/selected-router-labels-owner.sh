@@ -16,7 +16,8 @@ BUILD_DIR="$EVIDENCE_DIR/build"
 BACKUP_DIR="$EVIDENCE_DIR/backups"
 PRODUCTION_DIR="$EVIDENCE_DIR/production"
 CANDIDATE_APP="$DERIVED_DATA/Build/Products/Debug/Workbench.app"
-NATIVE_UI_VERIFIER="$HOME/model-trials-data/reports/trials-recovery-20261006/worker-integration-v1/native-ui-verification/verify.py"
+NATIVE_UI_VERIFIER="${WORKBENCH_NATIVE_UI_VERIFIER:-$HOME/model-trials-data/reports/trials-recovery-20261006/worker-integration-v1/native-ui-verification/verify.py}"
+EXPECTED_NATIVE_UI_VERIFIER_SHA256="309513d01bad8767b79c0fcfcfa73e15df3ea2571bf397071c2684974d692181"
 
 EXPECTED_BUNDLE_ID="me.mccaleb.Workbench"
 EXPECTED_VERSION="2.0"
@@ -27,7 +28,7 @@ BASELINE_REF="${WORKBENCH_BASELINE_REF:-dfaeae2034bc3e3eb6817328ee98a6fe34218f40
 mkdir -p "$LOG_DIR" "$BUILD_DIR" "$BACKUP_DIR" "$PRODUCTION_DIR"
 
 usage() {
-  printf '%s\n' "usage: $0 inspect|localhost|deploy|production|test-clean-scope|test-rollback|test-signed-binding|test-router-labels WORKBENCH-SELECTED-NAMES|sha256"
+  printf '%s\n' "usage: $0 inspect|localhost|deploy|production|test-clean-scope|test-rollback|test-signed-binding|test-router-labels WORKBENCH-SELECTED-NAMES|test-native-ui-verifier-relocation|sha256"
 }
 
 stamp() {
@@ -337,12 +338,22 @@ run_production() {
   require_bundle_identity "$INSTALLED_APP" installed || exit 1
   require_signature "$INSTALLED_APP" installed-production || exit 1
   verify_installed_matches_signed_candidate_binding || exit 1
-  [[ -x "$NATIVE_UI_VERIFIER" ]] || { printf '%s\n' "missing native UI verifier: $NATIVE_UI_VERIFIER" >&2; exit 1; }
+  require_native_ui_verifier
   curl -fsS http://127.0.0.1:8110/health >"$PRODUCTION_DIR/router-health.json"
   python3 "$NATIVE_UI_VERIFIER" --phase models --out "$PRODUCTION_DIR/workbench-m1-label" \
     --route-id ornith --model Qwen3.5-9B-6bit --host m1max --display-label "Qwen3.5-9B Q6 (M1 Max)"
   python3 "$NATIVE_UI_VERIFIER" --phase models --out "$PRODUCTION_DIR/workbench-m2-label" \
     --route-id qwen27 --model Qwen3.8-27B-4bit --host m2max --display-label "Qwen3.8-27B Q4 (M2 Max)"
+}
+
+require_native_ui_verifier() {
+  [[ -x "$NATIVE_UI_VERIFIER" ]] || { printf '%s\n' "missing native UI verifier: $NATIVE_UI_VERIFIER" >&2; return 1; }
+  local verifier_hash
+  verifier_hash="$(shasum -a 256 "$NATIVE_UI_VERIFIER" | awk '{print $1}')"
+  [[ "$verifier_hash" == "$EXPECTED_NATIVE_UI_VERIFIER_SHA256" ]] || {
+    printf '%s\n' "native UI verifier hash mismatch: $verifier_hash" >&2
+    return 1
+  }
 }
 
 bind_signed_candidate() {
@@ -565,6 +576,24 @@ SH
   bash "$verifier" WORKBENCH-SELECTED-NAMES "$SOURCE_DIR" >"$LOG_DIR/router-labels-swift-test.stdout.log" 2>"$LOG_DIR/router-labels-swift-test.stderr.log"
 }
 
+run_test_native_ui_verifier_relocation() {
+  local root="$EVIDENCE_DIR/tests/native-ui-verifier-relocation"
+  rm -rf "$root"
+  mkdir -p "$root"
+  local relocated="$root/verify.py"
+  cp "$HOME/model-trials-data/reports/trials-recovery-20261006/worker-integration-v1/native-ui-verification/verify.py" "$relocated"
+  chmod +x "$relocated"
+  WORKBENCH_NATIVE_UI_VERIFIER="$relocated"
+  NATIVE_UI_VERIFIER="$relocated"
+  require_native_ui_verifier
+  printf 'mutation\n' >>"$relocated"
+  if require_native_ui_verifier; then
+    printf '%s\n' "mutated native UI verifier was accepted" >&2
+    exit 1
+  fi
+  printf '%s\n' "native UI verifier relocation fixture passed" >"$root/result.txt"
+}
+
 write_sha256() {
   (
     cd "$EVIDENCE_DIR"
@@ -587,6 +616,7 @@ case "${1:-}" in
   test-rollback) run_test_rollback ;;
   test-signed-binding) run_test_signed_binding ;;
   test-router-labels) shift; run_test_router_labels "$@" ;;
+  test-native-ui-verifier-relocation) run_test_native_ui_verifier_relocation ;;
   sha256) write_sha256 ;;
   *) usage; exit 2 ;;
 esac
