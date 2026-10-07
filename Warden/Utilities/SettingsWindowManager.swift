@@ -2,6 +2,7 @@ import Foundation
 import SwiftUI
 import CoreData
 import AppKit
+import WorkbenchKit
 
 @MainActor
 final class SettingsWindowManager: ObservableObject {
@@ -68,6 +69,7 @@ final class SettingsWindowManager: ObservableObject {
         let settingsView = SettingsView()
             .environmentObject(store)
             .environment(\.managedObjectContext, PersistenceController.shared.container.viewContext)
+            .defaultAppStorage(TestIsolation.defaults())
             .preferredColorScheme(colorScheme)
         
         // Create and configure the window with transparent titlebar

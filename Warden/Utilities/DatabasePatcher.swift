@@ -2,6 +2,7 @@
 import CoreData
 import Foundation
 import os
+import WorkbenchKit
 
 class DatabasePatcher {
     static func applyPatches(context: NSManagedObjectContext) {
@@ -13,7 +14,7 @@ class DatabasePatcher {
     }
 
     static func addDefaultPersonasIfNeeded(context: NSManagedObjectContext, force: Bool = false) {
-        let defaults = UserDefaults.standard
+        let defaults = TestIsolation.defaults()
         if force || !defaults.bool(forKey: AppConstants.defaultPersonasFlag) {
             for (index, persona) in AppConstants.PersonaPresets.allPersonas.enumerated() {
                 let newPersona = PersonaEntity(context: context)
@@ -126,7 +127,7 @@ class DatabasePatcher {
     
     static func migrateExistingConfiguration(context: NSManagedObjectContext) {
         let apiServiceManager = APIServiceManager(viewContext: context)
-        let defaults = UserDefaults.standard
+        let defaults = TestIsolation.defaults()
         if defaults.bool(forKey: "APIServiceMigrationCompleted") {
             return
         }
@@ -236,7 +237,7 @@ class DatabasePatcher {
     }
     
     static func migratePersonaColorsToSymbols(context: NSManagedObjectContext) {
-        let defaults = UserDefaults.standard
+        let defaults = TestIsolation.defaults()
         if defaults.bool(forKey: "PersonaSymbolMigrationCompleted") {
             return
         }

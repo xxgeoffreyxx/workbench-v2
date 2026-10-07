@@ -35,6 +35,15 @@ public struct ChatReadState: Equatable {
         messages.filter { !$0.isOwn }.compactMap(\.date).max()
     }
 
+    /// When the app becomes active again: the chat to mark viewed, if one is actually on screen. A reply that
+    /// landed while the app was in the background is otherwise never marked read for the chat already open.
+    public static func chatToMarkOnActivation<ID>(
+        isActive: Bool, windowVisible: Bool, chatsTabShown: Bool, selectedChat: ID?
+    ) -> ID? {
+        guard isActive, windowVisible, chatsTabShown else { return nil }
+        return selectedChat
+    }
+
     // MARK: - Persistence
 
     public static let baselineKey = "workbench.chatUnreadSince"

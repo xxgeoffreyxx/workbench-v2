@@ -45,7 +45,8 @@ final class WorkbenchUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
         app = XCUIApplication()
-        app.launchArguments += ["-WorkbenchTestProjectFolder", Self.fixture]
+        // In-memory Core Data store and the "WorkbenchUITests" defaults suite: tests never touch real data.
+        app.launchArguments += ["-WorkbenchUITesting", "-WorkbenchTestProjectFolder", Self.fixture]
         app.launch()
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 15), "main window never appeared")
     }
@@ -325,6 +326,16 @@ final class WorkbenchUITests: XCTestCase {
     }
 
     func testMenuBarStatusItem() throws {
+        // Close the main window first, so Open has to bring it back rather than find it already there.
+        let main = app.windows.firstMatch
+        XCTAssertTrue(main.waitForExistence(timeout: 5), "main window missing before the test")
+        main.click()
+        app.typeKey("w", modifierFlags: .command)
+        let gone = NSPredicate(format: "exists == false")
+        let closed = expectation(for: gone, evaluatedWith: app.windows.firstMatch)
+        wait(for: [closed], timeout: 5)
+        XCTAssertEqual(app.windows.count, 0, "main window still open after Cmd-W")
+
         let item = app.menuBars.statusItems.firstMatch
         XCTAssertTrue(item.waitForExistence(timeout: 5), "no menu bar icon")
         item.click()

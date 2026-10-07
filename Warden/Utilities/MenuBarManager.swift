@@ -331,7 +331,7 @@ final class MenuBarManager: NSObject, NSMenuDelegate {
 
     @objc private func openJobsTab() {
         WorkbenchWindows.showMain()
-        UserDefaults.standard.set(SidebarMode.jobs.rawValue, forKey: "workbench.sidebarMode")
+        TestIsolation.defaults().set(SidebarMode.jobs.rawValue, forKey: "workbench.sidebarMode")
     }
 
     @objc private func openQuickChat() {

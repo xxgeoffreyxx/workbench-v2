@@ -15,7 +15,7 @@ enum WorkbenchProviders {
     @MainActor
     static func ensureDefaults(context: NSManagedObjectContext) {
         upgradeToV3(context: context)
-        guard !UserDefaults.standard.bool(forKey: seededKey) else { return }
+        guard !TestIsolation.defaults().bool(forKey: seededKey) else { return }
 
         let request = APIServiceEntity.fetchRequest() as! NSFetchRequest<APIServiceEntity>
         let existing = (try? context.fetch(request)) ?? []
@@ -38,9 +38,9 @@ enum WorkbenchProviders {
         do {
             try context.save()
             // New chats use the router unless the user picks another default in Settings → API Services.
-            UserDefaults.standard.set(router.objectID.uriRepresentation().absoluteString, forKey: "defaultApiService")
-            UserDefaults.standard.set(router.model, forKey: "gptModel")
-            UserDefaults.standard.set(true, forKey: seededKey)
+            TestIsolation.defaults().set(router.objectID.uriRepresentation().absoluteString, forKey: "defaultApiService")
+            TestIsolation.defaults().set(router.model, forKey: "gptModel")
+            TestIsolation.defaults().set(true, forKey: seededKey)
         } catch {
             WardenLog.coreData.error("Seeding Workbench providers failed: \(error.localizedDescription, privacy: .public)")
         }
@@ -51,7 +51,7 @@ enum WorkbenchProviders {
     @MainActor
     private static func upgradeToV3(context: NSManagedObjectContext) {
         let key = "workbench.providersSeeded.v3"
-        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        guard !TestIsolation.defaults().bool(forKey: key) else { return }
         let request = APIServiceEntity.fetchRequest() as! NSFetchRequest<APIServiceEntity>
         let existing = (try? context.fetch(request)) ?? []
         existing.filter { $0.type == routerType }.forEach { $0.useStreamResponse = true }
@@ -61,7 +61,7 @@ enum WorkbenchProviders {
             service.type = cli.rawValue
             service.generateChatNames = false
         }
-        if (try? context.save()) != nil { UserDefaults.standard.set(true, forKey: key) }
+        if (try? context.save()) != nil { TestIsolation.defaults().set(true, forKey: key) }
     }
 
     @MainActor

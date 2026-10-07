@@ -28,7 +28,7 @@ extension EnvironmentValues {
 }
 
 class PersistenceController {
-    static let shared = PersistenceController()
+    static let shared = PersistenceController(inMemory: TestIsolation.isUITesting())
 
     let container: NSPersistentContainer
 
@@ -86,9 +86,9 @@ class PersistenceController {
 
 @main
 struct WardenApp: App {
-    @AppStorage("gptModel") var gptModel: String = AppConstants.chatGptDefaultModel
-    @AppStorage("preferredColorScheme") private var preferredColorSchemeRaw: Int = 0
-    @AppStorage("showMenuBarIcon") private var showMenuBarIcon: Bool = true
+    @AppStorage("gptModel", store: TestIsolation.defaults()) var gptModel: String = AppConstants.chatGptDefaultModel
+    @AppStorage("preferredColorScheme", store: TestIsolation.defaults()) private var preferredColorSchemeRaw: Int = 0
+    @AppStorage("showMenuBarIcon", store: TestIsolation.defaults()) private var showMenuBarIcon: Bool = true
     @StateObject private var store = ChatStore(persistenceController: PersistenceController.shared)
     @StateObject private var updaterManager = UpdaterManager.shared
 
@@ -106,6 +106,11 @@ struct WardenApp: App {
     init() {
         // Ignore SIGPIPE to prevent crashes when MCP server processes terminate
         signal(SIGPIPE, SIG_IGN)
+
+        // UI tests start from empty settings each launch (their store is in memory too).
+        if TestIsolation.isUITesting() {
+            UserDefaults.standard.removePersistentDomain(forName: TestIsolation.defaultsSuiteName)
+        }
 
         ValueTransformer.setValueTransformer(
             RequestMessagesTransformer(),
@@ -133,6 +138,7 @@ struct WardenApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .defaultAppStorage(TestIsolation.defaults())
                 .environment(\.managedObjectContext, persistenceController.container.viewContext)
                 .preferredColorScheme(preferredColorScheme)
                 .modifier(ApprovalPresenter())

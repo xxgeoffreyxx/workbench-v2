@@ -41,7 +41,7 @@ final class WorkbenchHub: ObservableObject {
     var runningJobs: [JobRecord] { jobs.filter { $0.status == .running } }
 
     func start() {
-        ChatReadState.startup(defaults: .standard)
+        ChatReadState.startup(defaults: TestIsolation.defaults())
         WorkbenchNotifier.shared.start()
         refreshJobs()
         refreshRouter()
@@ -82,13 +82,13 @@ final class WorkbenchHub: ObservableObject {
 
     /// Read state from UserDefaults; start() sets the baseline before any chat activity.
     private func chatReadState() -> ChatReadState {
-        ChatReadState.load(defaults: .standard)
+        ChatReadState.load(defaults: TestIsolation.defaults())
     }
 
     func markChatViewed(_ id: UUID, at date: Date = Date()) {
         var state = chatReadState()
         state.markViewed(id.uuidString, at: date)
-        UserDefaults.standard.set(state.viewed, forKey: Self.chatViewedKey)
+        TestIsolation.defaults().set(state.viewed, forKey: Self.chatViewedKey)
     }
 
     /// When the chat was last looked at (see ChatReadState). A lookup writes nothing; only markChatViewed moves it.

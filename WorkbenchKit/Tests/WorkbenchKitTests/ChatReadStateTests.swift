@@ -105,4 +105,22 @@ final class ChatReadStateTests: XCTestCase {
         XCTAssertFalse(state.isUnread(id, lastReplyAt: ChatReadState.lastAssistantReply(messages)))
         XCTAssertTrue(state.isUnread(id, lastReplyAt: t(1_300)), "the old updatedDate-style source would light it up")
     }
+
+    // MARK: - Reactivation
+
+    /// Every guard combination: only active + visible + Chats tab + a selected chat marks that chat viewed.
+    func testChatToMarkOnActivationGuards() {
+        for active in [false, true] {
+            for visible in [false, true] {
+                for chats in [false, true] {
+                    for selected in [nil, "chat-1"] as [String?] {
+                        let got = ChatReadState.chatToMarkOnActivation(
+                            isActive: active, windowVisible: visible, chatsTabShown: chats, selectedChat: selected)
+                        let want: String? = (active && visible && chats) ? selected : nil
+                        XCTAssertEqual(got, want, "active=\(active) visible=\(visible) chats=\(chats) selected=\(String(describing: selected))")
+                    }
+                }
+            }
+        }
+    }
 }
