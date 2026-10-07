@@ -1,6 +1,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import CoreData
+import WorkbenchKit
 
 struct ComposerState {
     var text: String = ""
@@ -36,6 +37,7 @@ struct MessageInputView: View {
     var focusToken: Int = 0
     
     @StateObject private var mcpManager = MCPManager.shared
+    @StateObject private var promptCompletion = PromptCompletionState()
 
     @Environment(\.managedObjectContext) private var viewContext
     @Environment(\.wardenTheme) private var theme
@@ -77,8 +79,30 @@ struct MessageInputView: View {
     var body: some View {
         VStack(spacing: 0) {
             attachmentPreviewsSection
-            
+                .onAppear {
+                    let chat = chat
+                    promptCompletion.skillsProvider = { WorkbenchTools.shared.catalog(for: chat).skills }
+                }
+
             VStack(alignment: .leading, spacing: 10) {
+                // "/" prompt-completion suggestions float above the text input
+                if promptCompletion.isVisible {
+                    PromptCompletionListView(state: promptCompletion, onSelect: { prompt in
+                        if let newText = promptCompletion.acceptSelected(
+                            currentText: state.text,
+                            libraryManager: .shared,
+                            prompt: prompt
+                        ) {
+                            state.text = newText
+                        }
+                    }, onSelectSkill: { skill in
+                        if let newText = promptCompletion.acceptSkill(skill, currentText: state.text) {
+                            state.text = newText
+                        }
+                    })
+                    .padding(.bottom, 4)
+                }
+
                 // Text Input Area
                 textInputArea
                 
@@ -160,9 +184,23 @@ struct MessageInputView: View {
                     Spacer()
                     
                     HStack(spacing: 12) {
+                        if let chat = chat {
+                            ProjectPickerButton(chat: chat)
+                        }
+                        DictationButton(text: $state.text)
+                        ScreenshotButton { url in
+                            withAnimation {
+                                if imageUploadsAllowed {
+                                    state.attachedImages.append(ImageAttachment(url: url))
+                                } else {
+                                    state.attachedFiles.append(FileAttachment(url: url))
+                                }
+                            }
+                        }
+
                         // Model Selector
                         if let chat = chat {
-                            BetterCompactModelSelector(chat: chat)
+                            WorkbenchModelMenu(chat: chat)
                             ReasoningEffortMenu(chat: chat)
                         }
                         
@@ -513,9 +551,18 @@ struct MessageInputView: View {
                     onEnter()
                 },
                 font: NSFont.systemFont(ofSize: CGFloat(effectiveFontSize)),
-                maxHeight: maxInputHeight
+                maxHeight: maxInputHeight,
+                completionState: promptCompletion
             )
             .frame(height: dynamicHeight)
+            .onChange(of: state.text) { _, newText in
+                promptCompletion.sync(with: newText)
+            }
+            .onAppear {
+                // A composer can be created with a "/query" already in the text;
+                // sync once so suggestions appear without waiting for an edit.
+                promptCompletion.sync(with: state.text)
+            }
         }
         .padding(.vertical, 0)
         .frame(minWidth: 200)

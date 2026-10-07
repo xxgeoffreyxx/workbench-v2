@@ -1,0 +1,21 @@
+project:
+  name: Workbench-v2
+  repo: xxgeoffreyxx/workbench-v2
+  default_branch: main
+  profile: macos-command
+
+paths:
+  tasks_dir: tasks
+  scripts_dir: Scripts
+
+deploy:
+  type: command
+  timeout_s: 900
+  commands:
+    localhost: ["bash", "Scripts/selected-router-labels-owner.sh", "localhost"]
+    deploy: ["bash", "Scripts/selected-router-labels-owner.sh", "deploy"]
+    production: ["bash", "Scripts/selected-router-labels-owner.sh", "production"]
+
+testing:
+  unit:
+    command: "bash Scripts/selected-router-labels-owner.sh test-clean-scope && bash Scripts/selected-router-labels-owner.sh test-rollback && bash Scripts/selected-router-labels-owner.sh test-signed-binding && bash Scripts/selected-router-labels-owner.sh test-router-labels && bash Scripts/selected-router-labels-owner.sh test-component-entitlements && bash Scripts/selected-router-labels-owner.sh test-acceptance-required"

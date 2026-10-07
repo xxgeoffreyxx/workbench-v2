@@ -38,11 +38,11 @@ struct WelcomeScreen: View {
                 WelcomeIcon()
 
                 VStack(spacing: 8) {
-                    Text("Warden")
+                    Text("Workbench")
                         .font(.largeTitle.weight(.semibold))
                         .foregroundStyle(AppConstants.textPrimary)
 
-                    Text("Choose a model, then keep your chats in one Mac app.")
+                    Text("Local and cloud models, your projects, skills and Hosaka jobs in one place.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)

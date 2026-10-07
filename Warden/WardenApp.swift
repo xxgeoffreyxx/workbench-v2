@@ -3,6 +3,7 @@ import Darwin
 import Sparkle
 import SwiftUI
 import UserNotifications
+import WorkbenchKit
 import os
 
 struct WardenTheme {
@@ -115,6 +116,15 @@ struct WardenApp: App {
 
         DatabasePatcher.applyPatches(context: persistenceController.container.viewContext)
         DatabasePatcher.migrateExistingConfiguration(context: persistenceController.container.viewContext)
+        MainActor.assumeIsolated {
+            WorkbenchProviders.ensureDefaults(context: persistenceController.container.viewContext)
+            UITestSupport.apply(context: persistenceController.container.viewContext)
+        }
+
+        // Seed the prompt library's starter prompts on first launch
+        Task { @MainActor in
+            PromptLibraryManager.warmUp()
+        }
 
         // Initialize automatic updates
         _ = UpdaterManager.shared
@@ -125,6 +135,7 @@ struct WardenApp: App {
             ContentView()
                 .environment(\.managedObjectContext, persistenceController.container.viewContext)
                 .preferredColorScheme(preferredColorScheme)
+                .modifier(ApprovalPresenter())
                 .environment(\.wardenTheme, WardenTheme())
                 .environmentObject(store)
                 .onAppear {
@@ -168,6 +179,9 @@ struct WardenApp: App {
 
                     // Initialize menu bar icon based on stored preference
                     MenuBarManager.shared.updateVisibility(enabled: showMenuBarIcon)
+
+                    // Jobs feed, router health, notifications and the status icon
+                    WorkbenchHub.shared.start()
                 }
                 .onChange(of: showMenuBarIcon) { _, newValue in
                     MenuBarManager.shared.updateVisibility(enabled: newValue)
@@ -181,9 +195,9 @@ struct WardenApp: App {
 
         .commands {
             CommandGroup(replacing: .appInfo) {
-                Button("About Warden") {
+                Button("About Workbench") {
                     NSApplication.shared.orderFrontStandardAboutPanel([
-                        NSApplication.AboutPanelOptionKey.applicationName: "Warden",
+                        NSApplication.AboutPanelOptionKey.applicationName: "Workbench",
                         NSApplication.AboutPanelOptionKey.applicationVersion: Bundle.main.infoDictionary?[
                             "CFBundleShortVersionString"
                         ] as? String ?? "Unknown",
@@ -191,46 +205,15 @@ struct WardenApp: App {
                             as? String ?? "Unknown",
                         NSApplication.AboutPanelOptionKey.credits: NSAttributedString(
                             string: """
-                                A native macOS AI chat client supporting multiple providers.
+                                Workbench: local and cloud models, projects, skills and Hosaka jobs.
 
-                                Based on macai by Renset (github.com/Renset/macai)
-                                Licensed under Apache 2.0
-
-                                Pay for Warden: karatsidhu.gumroad.com/l/warden
-                                Support the developer: buymeacoffee.com/karatsidhu
-                                Discord: discord.gg/fasY8gAQR
-                                Source code: github.com/SidhuK/WardenApp
+                                Built on Warden by Karat Sidhu (github.com/SidhuK/WardenApp),
+                                itself based on macai by Renset. Licensed under Apache 2.0.
                                 """
                         ),
                     ])
                 }
 
-                Divider()
-
-                Button("Check for Updates...") {
-                    UpdaterManager.shared.checkForUpdates()
-                }
-                .disabled(!updaterManager.canCheckForUpdates)
-
-                Divider()
-
-                Button("Send Feedback...") {
-                    if let url = URL(string: "https://github.com/SidhuK/WardenApp/issues/new") {
-                        NSWorkspace.shared.open(url)
-                    }
-                }
-
-                Button("Pay for Warden...") {
-                    if let url = URL(string: AppConstants.donationURL) {
-                        NSWorkspace.shared.open(url)
-                    }
-                }
-
-                Button("Join Discord...") {
-                    if let url = URL(string: AppConstants.discordInviteURL) {
-                        NSWorkspace.shared.open(url)
-                    }
-                }
             }
 
             CommandGroup(replacing: .appSettings) {
@@ -290,13 +273,6 @@ struct WardenApp: App {
                 }
                 .keyboardShortcut("u", modifiers: [.command, .shift])
 
-                Divider()
-
-                Button("Send Feedback...") {
-                    if let url = URL(string: "https://github.com/SidhuK/WardenApp/issues/new") {
-                        NSWorkspace.shared.open(url)
-                    }
-                }
             }
 
             CommandGroup(replacing: .newItem) {
@@ -382,6 +358,7 @@ struct WardenApp: App {
 
             // Skip if no API key (except for providers that don't require it)
             guard !apiKey.isEmpty || providerType == "ollama" || providerType == "lmstudio" || providerType == "codex"
+                || providerType == "workbench_router"
             else {
                 continue
             }

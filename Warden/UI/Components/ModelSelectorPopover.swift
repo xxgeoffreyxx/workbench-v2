@@ -219,6 +219,8 @@ private struct ModelSelectorPopoverContent: View {
             return "Anthropic"
         case "openai_custom":
             return "OpenAI Compat"
+        case "workbench_router":
+            return "Router"
         default:
             return providerDisplayName(for: providerType)
         }
@@ -229,10 +231,11 @@ private struct ModelSelectorPopoverContent: View {
     }
 
     private func providerLogoAssetName(for providerType: String) -> String {
-        if providerType == "openai_custom" {
-            return "logo_chatgpt"
+        switch providerType {
+        case "openai_custom", "dashscope": return "logo_chatgpt"
+        case "workbench_router": return "logo_ollama"
+        default: return "logo_\(providerType)"
         }
-        return "logo_\(providerType)"
     }
 
     private func tabButton(
@@ -562,10 +565,11 @@ struct ModelSelectorList: View {
     }
 
     private func providerLogoAssetName(for providerType: String) -> String {
-        if providerType == "openai_custom" {
-            return "logo_chatgpt"
+        switch providerType {
+        case "openai_custom", "dashscope": return "logo_chatgpt"
+        case "workbench_router": return "logo_ollama"
+        default: return "logo_\(providerType)"
         }
-        return "logo_\(providerType)"
     }
 
     @ViewBuilder
