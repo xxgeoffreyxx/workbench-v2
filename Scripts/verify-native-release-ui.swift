@@ -29,7 +29,10 @@ func attr(_ element: AXUIElement, _ key: String) -> CFTypeRef? {
     return value
 }
 func text(_ e: AXUIElement) -> [String] {
-    [kAXTitleAttribute, kAXDescriptionAttribute, kAXIdentifierAttribute].compactMap { attr(e, $0) as? String }
+    var values = [kAXTitleAttribute, kAXDescriptionAttribute, kAXIdentifierAttribute].compactMap { attr(e, $0) as? String }
+    if (attr(e, kAXRoleAttribute) as? String) == kAXStaticTextRole,
+       let value = attr(e, kAXValueAttribute) as? String { values.append(value) }
+    return values
 }
 func elements(_ e: AXUIElement) -> [AXUIElement] {
     var result: [AXUIElement] = [], remaining = 15000
@@ -122,8 +125,8 @@ for route in routes {
     guard let titleElement = boxElements.first(where: { displayedText($0).contains(where: { $0.contains(label) }) }),
           let titleRect = rect(titleElement),
           let hostRect = boxElements.filter({ displayedText($0).contains(host) }).compactMap(rect).first(where: {
-              $0.minY >= titleRect.maxY - 1 && $0.minY - titleRect.maxY < 20 && abs($0.minX - titleRect.minX) < 8
-          }) else { fail("Accepted host \(host) is not beneath router label \(label)") }
+              $0.minX >= titleRect.maxX - 1 && abs($0.midY - titleRect.midY) < 8
+          }) else { fail("Accepted host \(host) is not to the right of router label \(label) in its original row") }
     residentGeometry.append(["label": label, "host": host, "label_bounds": geometry(titleRect), "host_bounds": geometry(hostRect)])
 }
 press("Chats")
