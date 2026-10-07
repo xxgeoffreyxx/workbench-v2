@@ -28,7 +28,7 @@ enum WorkbenchProviders {
 
         if let dashScope = existing.first(where: { $0.type == dashScopeType || $0.name == dashScopeName }) {
             dashScope.type = dashScopeType
-        } else if let key = DashScope.apiKey() {
+        } else if !TestIsolation.isUITesting(), let key = DashScope.apiKey() {
             let service = make(name: dashScopeName, url: URL(string: DashScope.baseURL + "/chat/completions")!,
                                model: "qwen-plus", context: context)
             service.type = dashScopeType
