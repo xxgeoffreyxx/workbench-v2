@@ -46,7 +46,7 @@ final class WorkbenchUITests: XCTestCase {
         continueAfterFailure = false
         app = XCUIApplication()
         // In-memory Core Data store and the "WorkbenchUITests" defaults suite: tests never touch real data.
-        app.launchArguments += ["-WorkbenchUITesting", "-WorkbenchTestProjectFolder", Self.fixture]
+        app.launchArguments += ["-WorkbenchUITesting", "YES", "-WorkbenchTestProjectFolder", Self.fixture]
         app.launch()
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 15), "main window never appeared")
     }
