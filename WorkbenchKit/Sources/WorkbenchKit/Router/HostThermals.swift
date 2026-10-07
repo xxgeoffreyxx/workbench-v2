@@ -45,19 +45,121 @@ public struct HostThermals: Hashable, Sendable {
         return nil
     }
 
-    /// Runs the sampler on `host` over ssh. Blocking; call off the main thread.
-    public static func sample(host: String) -> HostThermals? {
-        let process = Process()
+}
+
+/// One run of the thermal sampler. `start` reports the output and whether it exited cleanly, exactly once.
+public protocol SamplerProcess: AnyObject, Sendable {
+    func start(onExit: @escaping @Sendable (_ output: String, _ success: Bool) -> Void) throws
+    func terminate()
+}
+
+/// The real sampler: `ssh <host> python3 ~/bakeoff/thermal-sample.py`.
+public final class SSHSamplerProcess: SamplerProcess, @unchecked Sendable {
+    private let process = Process()
+
+    public init(host: String) {
         process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
         process.arguments = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=8", host,
                              "/usr/bin/python3 ~/bakeoff/thermal-sample.py"]
+    }
+
+    public func start(onExit: @escaping @Sendable (String, Bool) -> Void) throws {
         let pipe = Pipe()
         process.standardOutput = pipe
-        process.standardError = Pipe()
-        do { try process.run() } catch { return nil }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return parse(host: host, output: String(data: data, encoding: .utf8) ?? "")
+        process.standardError = FileHandle.nullDevice
+        process.standardInput = FileHandle.nullDevice
+        process.terminationHandler = { p in
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            onExit(String(data: data, encoding: .utf8) ?? "", p.terminationStatus == 0)
+        }
+        try process.run()
+    }
+
+    public func terminate() {
+        guard process.isRunning else { return }
+        process.terminate()
+        let pid = process.processIdentifier
+        // ssh normally exits on SIGTERM; make sure a wedged one cannot linger.
+        DispatchQueue.global().asyncAfter(deadline: .now() + 2) { [process] in
+            if process.isRunning { kill(pid, SIGKILL) }
+        }
+    }
+}
+
+/// Polls hosts with at most one sample in flight per host, a hard deadline per sample (the process is killed when
+/// it passes), and exponential backoff after failures, so a hung powermetrics cannot pile up ssh processes.
+public final class ThermalSampler: @unchecked Sendable {
+    private struct HostState {
+        var inFlight: SamplerProcess?
+        var failures = 0
+        var nextAllowed = Date.distantPast
+    }
+
+    private let timeout: TimeInterval
+    private let backoffBase: TimeInterval
+    private let backoffMax: TimeInterval
+    private let now: @Sendable () -> Date
+    private let makeProcess: @Sendable (String) -> SamplerProcess
+    private let lock = NSLock()
+    private var state: [String: HostState] = [:]
+
+    public init(timeout: TimeInterval = 30, backoffBase: TimeInterval = HostThermals.pollInterval,
+                backoffMax: TimeInterval = 1_800, now: @escaping @Sendable () -> Date = { Date() },
+                makeProcess: @escaping @Sendable (String) -> SamplerProcess = { SSHSamplerProcess(host: $0) }) {
+        self.timeout = timeout
+        self.backoffBase = backoffBase
+        self.backoffMax = backoffMax
+        self.now = now
+        self.makeProcess = makeProcess
+    }
+
+    public func isInFlight(host: String) -> Bool { lock.withLock { state[host]?.inFlight != nil } }
+
+    /// Starts a sample unless one is already running for `host` or it is backing off. Returns whether it started.
+    /// `completion` gets the reading, or nil on failure or timeout; it runs on whatever thread the process exits on.
+    @discardableResult
+    public func tick(host: String, completion: @escaping @Sendable (HostThermals?) -> Void) -> Bool {
+        let process: SamplerProcess? = lock.withLock {
+            var s = state[host] ?? HostState()
+            guard s.inFlight == nil, now() >= s.nextAllowed else { return nil }
+            let p = makeProcess(host)
+            s.inFlight = p
+            state[host] = s
+            return p
+        }
+        guard let process else { return false }
+        let finish: @Sendable (String, Bool) -> Void = { [weak self] output, success in
+            guard let self else { return }
+            let result = success ? HostThermals.parse(host: host, output: output, now: self.now()) : nil
+            let owned: Bool = self.lock.withLock {
+                guard var s = self.state[host], s.inFlight === process else { return false }
+                s.inFlight = nil
+                if result != nil {
+                    s.failures = 0
+                    s.nextAllowed = .distantPast
+                } else {
+                    s.failures += 1
+                    let wait = min(self.backoffBase * pow(2, Double(s.failures - 1)), self.backoffMax)
+                    s.nextAllowed = self.now().addingTimeInterval(wait)
+                }
+                self.state[host] = s
+                return true
+            }
+            if owned { completion(result) }
+        }
+        do {
+            try process.start(onExit: finish)
+        } catch {
+            finish("", false)
+            return true
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { [weak self] in
+            guard let self, self.isInFlight(host: host),
+                  self.lock.withLock({ self.state[host]?.inFlight === process }) else { return }
+            process.terminate()
+            finish("", false)
+        }
+        return true
     }
 }
 

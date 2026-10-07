@@ -53,3 +53,96 @@ final class ThermalLevelTests: XCTestCase {
         XCTAssertEqual(ThermalLevel.pressure("Heavy"), .high)
     }
 }
+
+
+/// A sampler process the test controls: it never exits on its own unless told to.
+private final class FakeSamplerProcess: SamplerProcess, @unchecked Sendable {
+    enum Behavior { case hang, fail, succeed(String) }
+    let behavior: Behavior
+    private let lock = NSLock()
+    private var onExit: (@Sendable (String, Bool) -> Void)?
+    private(set) var terminated = false
+    init(_ behavior: Behavior) { self.behavior = behavior }
+
+    func start(onExit: @escaping @Sendable (String, Bool) -> Void) throws {
+        switch behavior {
+        case .hang: lock.withLock { self.onExit = onExit }
+        case .fail: onExit("", false)
+        case .succeed(let output): onExit(output, true)
+        }
+    }
+
+    func terminate() {
+        let exit = lock.withLock { () -> (@Sendable (String, Bool) -> Void)? in
+            terminated = true
+            defer { onExit = nil }
+            return onExit
+        }
+        exit?("", false)
+    }
+}
+
+private final class Clock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = Date(timeIntervalSince1970: 1_000)
+    var now: Date { lock.withLock { value } }
+    func advance(_ seconds: TimeInterval) { lock.withLock { value += seconds } }
+}
+
+private final class Launches: @unchecked Sendable {
+    private let lock = NSLock()
+    private var items: [FakeSamplerProcess] = []
+    var all: [FakeSamplerProcess] { lock.withLock { items } }
+    func add(_ p: FakeSamplerProcess) { lock.withLock { items.append(p) } }
+}
+
+final class ThermalSamplerTests: XCTestCase {
+    let line = #"{"gpu_c": 60, "die_c": 55, "gpu_mhz": 1200, "pressure": "Nominal"}"#
+
+    private func sampler(_ behaviors: [FakeSamplerProcess.Behavior], timeout: TimeInterval = 5, clock: Clock,
+                         launches: Launches) -> ThermalSampler {
+        var remaining = behaviors
+        let lock = NSLock()
+        return ThermalSampler(timeout: timeout, backoffBase: 100, backoffMax: 1_000, now: { clock.now }, makeProcess: { _ in
+            let behavior = lock.withLock { remaining.isEmpty ? FakeSamplerProcess.Behavior.hang : remaining.removeFirst() }
+            let process = FakeSamplerProcess(behavior)
+            launches.add(process)
+            return process
+        })
+    }
+
+    func testNoSecondLaunchWhileOneIsInFlight() {
+        let clock = Clock(), launches = Launches()
+        let s = sampler([.hang], clock: clock, launches: launches)
+        XCTAssertTrue(s.tick(host: "m1max") { _ in })
+        XCTAssertFalse(s.tick(host: "m1max") { _ in }, "a tick while a sample is running is skipped")
+        XCTAssertEqual(launches.all.count, 1)
+    }
+
+    func testHungSampleIsTerminatedAfterDeadline() {
+        let clock = Clock(), launches = Launches()
+        let s = sampler([.hang, .succeed(line)], timeout: 0.05, clock: clock, launches: launches)
+        let done = expectation(description: "completion")
+        XCTAssertTrue(s.tick(host: "m1max") { result in XCTAssertNil(result); done.fulfill() })
+        wait(for: [done], timeout: 2)
+        XCTAssertTrue(launches.all[0].terminated, "the hung process is killed at the deadline")
+        XCTAssertFalse(s.isInFlight(host: "m1max"))
+    }
+
+    func testBackoffAfterFailureThenRecovers() {
+        let clock = Clock(), launches = Launches()
+        let s = sampler([.fail, .fail, .succeed(line), .succeed(line)], clock: clock, launches: launches)
+        XCTAssertTrue(s.tick(host: "m1max") { XCTAssertNil($0) })
+        XCTAssertFalse(s.tick(host: "m1max") { _ in }, "backing off right after a failure")
+        clock.advance(101)
+        XCTAssertTrue(s.tick(host: "m1max") { XCTAssertNil($0) })
+        clock.advance(101)
+        XCTAssertFalse(s.tick(host: "m1max") { _ in }, "second failure doubles the wait to 200s")
+        clock.advance(100)
+        var got: HostThermals?
+        XCTAssertTrue(s.tick(host: "m1max") { got = $0 })
+        XCTAssertEqual(got?.gpuC, 60)
+        XCTAssertTrue(s.tick(host: "m1max") { _ in }, "success clears the backoff")
+        XCTAssertEqual(launches.all.count, 4)
+    }
+}

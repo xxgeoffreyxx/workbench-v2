@@ -299,6 +299,29 @@ final class FixtureAndDedupeTests: XCTestCase {
         XCTAssertEqual(merged[0].title, "Scout: Real")
         XCTAssertEqual(merged[0].eventCount, 1)
     }
+
+    /// Review finding: the dedupe key had no project, so the same task id in two projects merged into one job.
+    func testSameTaskIDInTwoProjectsStaysSeparate() {
+        func rec(_ project: String, _ status: JobStatus) -> JobRecord {
+            JobRecord(id: "\(project):peer:T-1", project: project, workflow: .peer, status: status, title: "\(project) T-1",
+                      model: nil, host: nil, taskPath: "/r/\(project.lowercased())/T-1", artifactPath: nil,
+                      summary: "s", output: "o", updatedAt: Date(timeIntervalSince1970: 10), eventCount: 0)
+        }
+        let event = JobEvent(jobID: "thriveos:peer:t-1", timestamp: Date(timeIntervalSince1970: 50), project: "thriveos",
+                             workflow: .peer, status: .running, title: "Re-run", taskPath: "/r/thriveos/T-1")
+        let merged = JobFeed.merge(artifacts: [rec("ThriveOS", .complete), rec("Scout", .complete)], events: [event],
+                                   projectRoots: [:], runsRoot: "/nonexistent")
+        let byID = Dictionary(uniqueKeysWithValues: merged.map { ($0.id, $0) })
+        XCTAssertEqual(Set(byID.keys), ["Scout:peer:T-1", "ThriveOS:peer:T-1"])
+        XCTAssertEqual(byID["Scout:peer:T-1"]?.status, .complete, "Scout must not pick up ThriveOS's event")
+        XCTAssertEqual(byID["Scout:peer:T-1"]?.eventCount, 0)
+        XCTAssertEqual(byID["ThriveOS:peer:T-1"]?.status, .running)
+        XCTAssertEqual(byID["ThriveOS:peer:T-1"]?.eventCount, 1)
+        XCTAssertNotEqual(JobFeed.dedupeKey(workflow: .peer, project: "Scout", id: "Scout:peer:T-1", taskPath: nil),
+                          JobFeed.dedupeKey(workflow: .peer, project: "ThriveOS", id: "ThriveOS:peer:T-1", taskPath: nil))
+        XCTAssertEqual(JobFeed.dedupeKey(workflow: .peer, project: "Scout", id: "Scout:peer:T-1", taskPath: nil),
+                       JobFeed.dedupeKey(workflow: .peer, project: "scout", id: "scout:peer:t-1", taskPath: nil))
+    }
 }
 
 final class RunningDetectionTests: XCTestCase {

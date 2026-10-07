@@ -86,7 +86,8 @@ final class WorkbenchHub: ObservableObject {
     }
 
     /// When the chat was last looked at. Nothing before unread tracking started counts as new, so old chats never
-    /// light up; the first time a chat is seen, its current state becomes the baseline.
+    /// light up. A chat the user has never opened falls back to that startup baseline; only markChatViewed (called
+    /// when the user actually views it) moves it, so a reply that lands before the first menu lookup stays unread.
     func chatLastViewed(_ id: UUID, updatedAt: Date) -> Date {
         let defaults = UserDefaults.standard
         let since = defaults.object(forKey: "workbench.chatUnreadSince") as? Double ?? {
@@ -95,20 +96,20 @@ final class WorkbenchHub: ObservableObject {
             return now
         }()
         let viewed = defaults.dictionary(forKey: Self.chatViewedKey) as? [String: Double] ?? [:]
-        guard let seconds = viewed[id.uuidString] else {
-            markChatViewed(id, at: updatedAt)
-            return max(updatedAt, Date(timeIntervalSince1970: since))
-        }
+        guard let seconds = viewed[id.uuidString] else { return Date(timeIntervalSince1970: since) }
         return Date(timeIntervalSince1970: max(seconds, since))
     }
 
     // MARK: - Thermals
 
+    /// Single-flight, deadline and failure backoff live in ThermalSampler; a tick it skips is simply dropped.
+    private let thermalSampler = ThermalSampler()
+
     func refreshThermals() {
-        Task.detached(priority: .utility) {
-            for host in HostThermals.hosts {
-                guard let sample = HostThermals.sample(host: host) else { continue }
-                await MainActor.run { WorkbenchHub.shared.thermals[host] = sample }
+        for host in HostThermals.hosts {
+            thermalSampler.tick(host: host) { sample in
+                guard let sample else { return }
+                Task { @MainActor in WorkbenchHub.shared.thermals[host] = sample }
             }
         }
     }
