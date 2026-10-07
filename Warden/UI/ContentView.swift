@@ -168,13 +168,15 @@ struct ContentView: View {
         }
         // A reply that landed while the app was in the background is read once the user is back on that chat.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            let visible = (window?.isVisible ?? false) && !(window?.isMiniaturized ?? true)
-            if let id = ChatReadState.chatToMarkOnActivation(
-                isActive: NSApp.isActive, windowVisible: visible,
-                chatsTabShown: sidebarMode == .chats, selectedChat: selectedChat?.id
-            ) {
-                hub.markChatViewed(id)
-            }
+            markDisplayedChatViewedIfOnScreen()
+        }
+        // Restoring the minimized main window (or it becoming key) while the app is already active fires no
+        // didBecomeActive, so a reply that landed while minimized is marked read here, under the same rule.
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didDeminiaturizeNotification)) { note in
+            if let w = note.object as? NSWindow, w === window { markDisplayedChatViewedIfOnScreen() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { note in
+            if let w = note.object as? NSWindow, w === window { markDisplayedChatViewedIfOnScreen() }
         }
         .onChange(of: selectedProject) { oldValue, newValue in
             setupSelectedProjectChange(oldValue: oldValue, newValue: newValue)
@@ -193,6 +195,16 @@ struct ContentView: View {
                     showingCreateProject = false
                 }
             )
+        }
+    }
+
+    private func markDisplayedChatViewedIfOnScreen() {
+        let visible = (window?.isVisible ?? false) && !(window?.isMiniaturized ?? true)
+        if let id = ChatReadState.chatToMarkOnActivation(
+            isActive: NSApp.isActive, windowVisible: visible,
+            chatsTabShown: sidebarMode == .chats, selectedChat: selectedChat?.id
+        ) {
+            hub.markChatViewed(id)
         }
     }
 

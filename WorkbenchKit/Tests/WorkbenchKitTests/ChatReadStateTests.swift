@@ -143,4 +143,18 @@ final class ChatReadStateTests: XCTestCase {
     func testFinishedReplyDifferentChatNotMarked() { XCTAssertFalse(finished(selected: "b")) }
     func testFinishedReplyNoChatSelectedNotMarked() { XCTAssertFalse(finished(selected: nil)) }
     func testFinishedReplyAllConditionsMarked() { XCTAssertTrue(finished()) }
+
+    // A reply finished while the window was minimized; the user restores it while the app is already active
+    // (no didBecomeActive fires), so the restore itself must mark the displayed chat read.
+    func testRestoreFromMinimizedWithAppActiveMarksDisplayedChat() {
+        XCTAssertNil(ChatReadState.chatToMarkOnActivation(
+            isActive: true, windowVisible: false, chatsTabShown: true, selectedChat: "a"), "minimized: not marked")
+        XCTAssertEqual(ChatReadState.chatToMarkOnActivation(
+            isActive: true, windowVisible: true, chatsTabShown: true, selectedChat: "a"), "a", "restored: marked")
+    }
+
+    func testRestoreFromMinimizedOnJobsTabDoesNotMark() {
+        XCTAssertNil(ChatReadState.chatToMarkOnActivation(
+            isActive: true, windowVisible: true, chatsTabShown: false, selectedChat: "a"))
+    }
 }

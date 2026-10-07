@@ -106,13 +106,21 @@ public final class SSHSamplerProcess: SamplerProcess, @unchecked Sendable {
         process.standardInput = FileHandle.nullDevice
         process.terminationHandler = { _ in done.leave() }
         done.notify(queue: .global()) {
-            let data = self.lock.withLock { self.output }
-            onExit(String(decoding: data, as: UTF8.self), self.process.terminationStatus == 0 && !self.wasTerminated)
+            // One snapshot under the lock: terminate() writes wasTerminated under the same lock.
+            let (data, success): (Data, Bool) = self.lock.withLock {
+                (self.output, !self.launchFailed && !self.wasTerminated && self.process.terminationStatus == 0)
+            }
+            onExit(String(decoding: data, as: UTF8.self), success)
         }
         do {
             try process.run()
         } catch {
+            // The process never started, so its exit leave never comes: balance it here so notify reports the
+            // failure once, and drop the handlers so nothing keeps self alive.
+            lock.withLock { launchFailed = true }
+            process.terminationHandler = nil
             stopReader()
+            done.leave()
             throw error
         }
     }
@@ -138,6 +146,7 @@ public final class SSHSamplerProcess: SamplerProcess, @unchecked Sendable {
     private var output = Data()
     private var readerStopped = false
     private var wasTerminated = false
+    private var launchFailed = false
     private var readerDone: (@Sendable () -> Void)?
 }
 

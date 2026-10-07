@@ -201,6 +201,45 @@ final class ThermalSamplerTests: XCTestCase {
         XCTAssertLessThanOrEqual(try XCTUnwrap(box.value).utf8.count, SSHSamplerProcess.maxRetainedBytes)
     }
 
+    /// A process that cannot launch still reports failure once, promptly, and is not kept alive by its own closures.
+    func testRunFailureReportsFailureAndReleasesProcess() {
+        let done = expectation(description: "onExit")
+        let box = OutputBox()
+        weak var weakP: SSHSamplerProcess?
+        autoreleasepool {
+            let p = SSHSamplerProcess(executable: URL(fileURLWithPath: "/nonexistent/sampler"), arguments: [])
+            weakP = p
+            do {
+                try p.start { _, success in
+                    box.value = success ? "success" : "failure"
+                    done.fulfill()
+                }
+            } catch {}
+        }
+        wait(for: [done], timeout: 2)
+        XCTAssertEqual(box.value, "failure")
+        let deadline = Date().addingTimeInterval(2)
+        while weakP != nil, Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.01)) }
+        XCTAssertNil(weakP, "a failed launch must not retain the process object")
+    }
+
+    /// terminate() racing a normal exit: onExit fires exactly once, and success always comes with the full output.
+    func testTerminateRacingExitReportsConsistently() throws {
+        for _ in 0..<200 {
+            let done = expectation(description: "exit")
+            let calls = OutputBox()
+            let p = SSHSamplerProcess(executable: URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", "echo ok"])
+            try p.start { output, success in
+                calls.value = (calls.value ?? "") + (success ? "S:\(output)" : "F")
+                done.fulfill()
+            }
+            DispatchQueue.global().async { p.terminate() }
+            wait(for: [done], timeout: 5)
+            let v = try XCTUnwrap(calls.value)
+            XCTAssertTrue(v == "F" || v == "S:ok\n", "inconsistent result: \(v)")
+        }
+    }
+
     func testHungProcessIsTerminatedAtDeadline() {
         let r = runSampler("sleep 30", timeout: 0.5)
         XCTAssertNil(r.output)
