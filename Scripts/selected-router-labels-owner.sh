@@ -26,7 +26,7 @@ EXPECTED_TEAM_ID="45CY38F39L"
 mkdir -p "$LOG_DIR" "$BUILD_DIR" "$BACKUP_DIR" "$PRODUCTION_DIR"
 
 usage() {
-  printf '%s\n' "usage: $0 inspect|localhost|deploy|production|test-clean-scope|test-rollback|test-signed-binding|test-router-labels|test-component-entitlements|test-acceptance-required|test-same-start|sha256"
+  printf '%s\n' "usage: $0 inspect|localhost|deploy|production|test-clean-scope|test-rollback|test-signed-binding|test-router-labels|test-component-entitlements|test-acceptance-required|test-same-start|test-read-state-preservation|sha256"
 }
 
 stamp() {
@@ -170,6 +170,7 @@ inspect_installed() {
 run_localhost() {
   require_acceptance_input
   verify_source_scope_and_hashes record
+  log_run read-state-preservation bash "$SCRIPT_DIR/selected-router-labels-owner.sh" test-read-state-preservation
   log_run swift-test /usr/bin/swift test --package-path "$SOURCE_DIR/WorkbenchKit"
   # UI tests use a separate bundle/preferences identity and the explicit
   # in-memory UI-test store. Debug's directory alone is not data isolation.
@@ -596,6 +597,32 @@ run_deploy() {
   exit 1
 }
 
+with_preserved_chat_read_state() (
+  local domain="$1" snapshot status
+  shift
+  snapshot="$(mktemp /tmp/workbench-read-state.XXXXXX)"
+  if ! /usr/bin/swift "$SCRIPT_DIR/preserve-chat-read-state.swift" snapshot "$domain" "$snapshot"; then
+    rm -f "$snapshot"
+    return 1
+  fi
+  restore_read_state_on_exit() {
+    status=$?
+    trap - EXIT
+    if ! log_run read-state-restore /usr/bin/swift "$SCRIPT_DIR/preserve-chat-read-state.swift" restore "$domain" "$snapshot"; then
+      printf 'Unread-state restoration failed; snapshot retained at %s\n' "$snapshot" >&2
+      exit 1
+    fi
+    if ! log_run read-state-verify /usr/bin/swift "$SCRIPT_DIR/preserve-chat-read-state.swift" verify "$domain" "$snapshot"; then
+      printf 'Unread-state verification failed; snapshot retained at %s\n' "$snapshot" >&2
+      exit 1
+    fi
+    rm -f "$snapshot"
+    exit "$status"
+  }
+  trap restore_read_state_on_exit EXIT
+  if "$@"; then exit 0; else exit "$?"; fi
+)
+
 run_production() {
   require_acceptance_input
   verify_source_scope_and_hashes
@@ -604,9 +631,13 @@ run_production() {
   verify_installed_matches_signed_candidate_binding || exit 1
   verify_component_entitlements "$INSTALLED_APP" "$EVIDENCE_DIR/installed-component-entitlements.json" || exit 1
   [[ -n "$(observe_running_app)" ]] || { printf '%s\n' "installed Workbench is not running" >&2; return 1; }
+  with_preserved_chat_read_state "$EXPECTED_BUNDLE_ID" verify_production_ui
+}
+
+verify_production_ui() {
   if [[ -n "$ACCEPTANCE_INPUT" ]]; then
-    curl -fsS http://127.0.0.1:8110/health >"$PRODUCTION_DIR/router-health.json"
-    python3 - "$ACCEPTANCE_INPUT" "$PRODUCTION_DIR" <<'PYCODE'
+    curl -fsS http://127.0.0.1:8110/health >"$PRODUCTION_DIR/router-health.json" || return $?
+    python3 - "$ACCEPTANCE_INPUT" "$PRODUCTION_DIR" <<'PYCODE' || return $?
 import json, pathlib, subprocess, sys
 acceptance=json.loads(pathlib.Path(sys.argv[1]).read_text())
 for row in acceptance['routes']:
@@ -616,6 +647,74 @@ PYCODE
   fi
   log_run native-release-ui /usr/bin/swift "$SOURCE_DIR/Scripts/verify-native-release-ui.swift" "$INSTALLED_APP" "$PRODUCTION_DIR/native-release-ui.json" "$ACCEPTANCE_INPUT"
 }
+
+run_test_read_state_preservation() (
+  local fixture domain status
+  fixture="$(mktemp -d /tmp/workbench-read-state-test.XXXXXX)"
+  domain="Workbench.OwnerReadStateTest.$$.${RANDOM}"
+  LOG_DIR="$fixture/logs"; mkdir -p "$LOG_DIR"
+  trap '/usr/bin/defaults delete "$domain" >/dev/null 2>&1 || true; rm -rf "$fixture"' EXIT
+  cat >"$fixture/preferences.swift" <<'SWIFT'
+import Foundation
+let mode = CommandLine.arguments[1], domain = CommandLine.arguments[2]
+guard domain.hasPrefix("Workbench.OwnerReadStateTest."), let d = UserDefaults(suiteName: domain) else { exit(1) }
+let baseline = "workbench.chatUnreadSince", viewed = "workbench.chatLastViewed"
+func original() -> Bool { d.double(forKey: baseline) == 20 && d.dictionary(forKey: viewed) as NSDictionary? == ["old": 10.0] as NSDictionary }
+switch mode {
+case "init", "missing":
+    d.removePersistentDomain(forName: domain)
+    if mode == "init" { d.set(20.0, forKey: baseline); d.set(["old": 10.0], forKey: viewed) }
+    d.set(1, forKey: "unrelated"); guard d.synchronize() else { exit(1) }
+case "mutate":
+    d.set(88.0, forKey: baseline); d.set(["changed": 99.0], forKey: viewed)
+    d.set(777, forKey: "unrelated"); guard d.synchronize() else { exit(1) }
+case "check":
+    guard original(), d.integer(forKey: "unrelated") == 777 else { exit(1) }
+case "check-missing":
+    guard d.object(forKey: baseline) == nil, d.object(forKey: viewed) == nil,
+          d.integer(forKey: "unrelated") == 777 else { exit(1) }
+case "watch":
+    guard d.double(forKey: baseline) == 88 else { exit(1) }
+    FileHandle.standardOutput.write(Data("cached\n".utf8))
+    guard readLine() != nil else { exit(1) }
+    let deadline = Date().addingTimeInterval(5)
+    while !original(), Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.1)) }
+    guard original() else { exit(1) }
+default: exit(1)
+}
+SWIFT
+  mutate_read_state_fixture() {
+    /usr/bin/swift "$fixture/preferences.swift" mutate "$domain" || return $?
+    return "${1:-0}"
+  }
+  /usr/bin/swift "$fixture/preferences.swift" init "$domain"
+  with_preserved_chat_read_state "$domain" mutate_read_state_fixture
+  /usr/bin/swift "$fixture/preferences.swift" check "$domain"
+  if with_preserved_chat_read_state "$domain" mutate_read_state_fixture 7; then
+    printf '%s\n' 'verification failure was incorrectly swallowed' >&2; exit 1
+  else
+    status=$?; [[ "$status" == 7 ]] || exit 1
+  fi
+  /usr/bin/swift "$fixture/preferences.swift" check "$domain"
+  /usr/bin/swift "$fixture/preferences.swift" missing "$domain"
+  with_preserved_chat_read_state "$domain" mutate_read_state_fixture
+  /usr/bin/swift "$fixture/preferences.swift" check-missing "$domain"
+  /usr/bin/swift "$fixture/preferences.swift" init "$domain"
+  /usr/bin/swift "$SCRIPT_DIR/preserve-chat-read-state.swift" snapshot "$domain" "$fixture/snapshot.plist"
+  /usr/bin/swift "$fixture/preferences.swift" mutate "$domain"
+  python3 - "$fixture/preferences.swift" "$SCRIPT_DIR/preserve-chat-read-state.swift" "$domain" "$fixture/snapshot.plist" <<'PY'
+import subprocess,sys
+reader=subprocess.Popen(['/usr/bin/swift',sys.argv[1],'watch',sys.argv[3]],stdin=subprocess.PIPE,stdout=subprocess.PIPE,text=True)
+try:
+    if reader.stdout.readline().strip() != 'cached': raise RuntimeError('cached preferences reader did not start')
+    subprocess.run(['/usr/bin/swift',sys.argv[2],'restore',sys.argv[3],sys.argv[4]],check=True)
+    reader.communicate('\n',timeout=15)
+    if reader.returncode: raise RuntimeError('running reader did not observe restored preferences')
+finally:
+    if reader.poll() is None: reader.terminate(); reader.wait(timeout=5)
+PY
+  printf '%s\n' 'read-state preservation: success, failure, absent keys, unrelated preferences and cached cross-process reader PASS'
+)
 
 bind_signed_candidate() {
   local staged="$1"
@@ -1115,6 +1214,7 @@ case "${1:-}" in
   test-component-entitlements) run_test_component_entitlements ;;
   test-acceptance-required) run_test_acceptance_required ;;
   test-same-start) run_test_same_start ;;
+  test-read-state-preservation) run_test_read_state_preservation ;;
   test-router-labels) shift; run_test_router_labels "$@" ;;
   sha256) write_sha256 ;;
   *) usage; exit 2 ;;

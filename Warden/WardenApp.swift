@@ -28,7 +28,10 @@ extension EnvironmentValues {
 }
 
 class PersistenceController {
-    static let shared = PersistenceController(inMemory: TestIsolation.isUITesting())
+    static let shared: PersistenceController = {
+        TestIsolation.requireSafeLaunch()
+        return PersistenceController(inMemory: TestIsolation.isUITesting())
+    }()
 
     let container: NSPersistentContainer
 
